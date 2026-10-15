@@ -1,295 +1,403 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  ReactFlow, Background, Controls, MiniMap, MarkerType,
-} from "@xyflow/react";
+import { ReactFlow, Background, Controls, MiniMap, MarkerType } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   Shield, Search, Bell, ChevronDown, LayoutDashboard, FolderSearch, Files,
   Network, GitBranch, Clock3, FileText, Settings, Upload, Download, Plus,
   AlertTriangle, CircleCheck, CircleDot, Fingerprint, ScanSearch, Trash2,
-  ExternalLink, Copy, X, Filter, SlidersHorizontal, Activity, Eye, LockKeyhole,
-  ArrowUpRight, ArrowDownLeft, FileWarning, SearchCheck, RefreshCw, MoreHorizontal,
+  ExternalLink, Copy, X, Filter, Activity, LockKeyhole, ArrowUpRight,
+  ArrowDownLeft, SearchCheck, MoreHorizontal, FolderPlus, FileJson, FileDown,
+  Pencil, Wallet, FileWarning, RefreshCw, ListFilter, Printer, Save,
 } from "lucide-react";
 
-const STORAGE_KEY = "tracepoint-forensics-v1";
-const DEMO = {
-  caseName: "Operation Glass River",
-  caseId: "TPF-2026-014",
-  evidence: [],
-  timeline: [],
-};
+const STORAGE_KEY = "tracepoint-forensics-v2";
+const LEGACY_STORAGE_KEY = "tracepoint-forensics-v1";
 const iconMap = {
   Overview: LayoutDashboard, Investigations: FolderSearch, "Evidence Vault": Files,
   "Entity Network": Network, "Fund Tracing": GitBranch, "Investigation Timeline": Clock3,
   Reports: FileText, Settings,
 };
-const initialEvents = [
-  { id: "ev-a", time: "09:12:00", date: "2026-10-10", title: "Initial contact reported", detail: "Complainant describes an invitation to a private investment group.", source: "Interview notes", status: "REPORTED", type: "statement" },
-  { id: "ev-b", time: "09:22:00", date: "2026-10-10", title: "Transfer claim recorded", detail: "A transfer of 0.50 ETH is described in submitted material.", source: "E-014 · TX-01", status: "UNVERIFIED", type: "transaction" },
-  { id: "ev-c", time: "09:31:00", date: "2026-10-10", title: "Additional payment requested", detail: "Contact allegedly requests a verification payment.", source: "Chat excerpt · CHAT-02", status: "REPORTED", type: "statement" },
-  { id: "ev-d", time: "09:40:00", date: "2026-10-10", title: "Transfer claim recorded", detail: "A transfer of 0.45 ETH is described in submitted material.", source: "E-014 · TX-02", status: "UNVERIFIED", type: "transaction" },
-  { id: "ev-e", time: "10:11:00", date: "2026-10-10", title: "Withdrawal clearance demanded", detail: "Contact allegedly states that withdrawals are locked pending another payment.", source: "Chat excerpt · CHAT-04", status: "REPORTED", type: "statement" },
-  { id: "ev-f", time: "10:17:00", date: "2026-10-10", title: "Transfer claim recorded", detail: "A transfer of 0.25 ETH is described in submitted material.", source: "E-014 · TX-03", status: "UNVERIFIED", type: "transaction" },
-];
-const sampleTransfers = [
-  { id: "sample-tx-1", source: "0x1111111111111111111111111111111111111111", target: "0x2222222222222222222222222222222222222222", amount: "0.50 ETH", hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", time: "2026-10-10 09:22:00 UTC", evidenceId: "E-014", status: "UNVERIFIED", isDemo: true },
-  { id: "sample-tx-2", source: "0x2222222222222222222222222222222222222222", target: "0x3333333333333333333333333333333333333333", amount: "0.45 ETH", hash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", time: "2026-10-10 09:40:00 UTC", evidenceId: "E-014", status: "UNVERIFIED", isDemo: true },
-  { id: "sample-tx-3", source: "0x3333333333333333333333333333333333333333", target: "0x4444444444444444444444444444444444444444", amount: "0.25 ETH", hash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", time: "2026-10-10 10:17:00 UTC", evidenceId: "E-014", status: "UNVERIFIED", isDemo: true },
-];
-const shortAddress = (a = "") => a.length > 14 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
-const aliasFor = (address, addresses) => `Wallet ${String.fromCharCode(65 + Math.max(0, addresses.indexOf(address)))}`;
-const parseTransactions = (raw, evidenceId) => {
-  const txs = [];
-  let current = {};
-  const flush = () => {
-    if (current.from && current.to) txs.push({
-      id: `${evidenceId}-TX-${txs.length + 1}`, source: current.from, target: current.to,
-      amount: current.amount || "Amount not provided", hash: current.hash || "",
-      time: current.time || "", evidenceId, status: "UNVERIFIED",
+const isPlaceholderHex = (value = "") => /^0x([a-f0-9])\1{39,63}$/i.test(String(value).trim());
+const shortAddress = (value = "") => {
+  if (!value) return "";
+  if (isPlaceholderHex(value)) return "Placeholder identifier";
+  return value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
+};
+const fmtDate = (value = new Date().toISOString()) => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+};
+const makeId = (prefix = "ID") => `${prefix}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+const safeFileName = (value = "report") => value.replace(/[^a-z0-9-_]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "report";
+const blankCase = (name = "Untitled investigation", id = makeId("TPF")) => ({
+  caseId: id, caseName: name, summary: "Suspected cryptocurrency fraud · Financial transaction analysis",
+  blockchain: "Ethereum", reportedLoss: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  evidence: [], manualTimeline: [], importedTransactions: [],
+});
+
+function Badge({ children, tone = "amber" }) { return <span className={`badge badge-${tone}`}><i />{children}</span>; }
+function Metric({ label, value, sub, icon: Icon, tone = "cyan" }) { return <div className="metric"><div className={`metric-icon ${tone}`}><Icon size={18}/></div><div className="metric-copy"><span>{label}</span><strong>{value}</strong><small>{sub}</small></div><div className="metric-line"/></div>; }
+function SectionHeader({ eyebrow, title, description, actions }) { return <div className="section-header"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="header-actions">{actions}</div>}</div>; }
+function EmptyState({ icon: Icon = Files, title, text, action }) { return <div className="empty-state"><div className="empty-icon"><Icon size={24}/></div><h3>{title}</h3><p>{text}</p>{action}</div>; }
+
+function extractWallets(text) { return [...new Set((text.match(/\b0x[a-fA-F0-9]{40}\b/g) || []))]; }
+function extractHashes(text) { return [...new Set((text.match(/\b0x[a-fA-F0-9]{64}\b/g) || []))]; }
+function normalizeTime(value) {
+  if (!value) return "";
+  const raw = String(value).trim();
+  const iso = raw.match(/\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|\s?UTC|[+-]\d{2}:?\d{2})?)?/i);
+  return iso ? iso[0].replace(/\s+UTC$/i, "Z") : raw;
+}
+function parseTransactions(raw = "", evidenceId = "") {
+  const text = String(raw || "");
+  if (!text.trim()) return [];
+  const output = [];
+  const add = (record, index) => {
+    const source = String(record.source ?? record.from ?? record.sender ?? record.fromAddress ?? "").trim();
+    const target = String(record.target ?? record.to ?? record.recipient ?? record.toAddress ?? "").trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(source) || !/^0x[a-fA-F0-9]{40}$/.test(target)) return;
+    const amountRaw = record.amount ?? record.value ?? record.quantity ?? "";
+    const asset = record.asset ?? record.currency ?? record.token ?? "";
+    const hash = String(record.hash ?? record.transactionHash ?? record.txHash ?? record.transaction_hash ?? "").trim();
+    const time = normalizeTime(record.time ?? record.timestamp ?? record.date ?? record.blockTimestamp ?? "");
+    output.push({
+      id: String(record.id || `${evidenceId || "TX"}-TX-${index + 1}`), source, target,
+      amount: amountRaw === "" ? "Amount not provided" : `${amountRaw}${asset && !String(amountRaw).toUpperCase().includes(String(asset).toUpperCase()) ? ` ${asset}` : ""}`,
+      amountValue: Number.parseFloat(String(amountRaw).replace(/,/g, "")) || 0, asset: String(asset || ""),
+      hash: /^0x[a-fA-F0-9]{64}$/.test(hash) ? hash : "", time, evidenceId: record.evidenceId || evidenceId || "Imported dossier",
+      status: record.status === "VERIFIED" ? "VERIFIED" : "UNVERIFIED", sourceType: record.sourceType || "submitted claim",
     });
-    current = {};
   };
-  for (const line of raw.split(/\r?\n/)) {
-    const from = line.match(/\bFrom\s*:\s*(0x[a-fA-F0-9]{40})\b/i);
-    const to = line.match(/\bTo\s*:\s*(0x[a-fA-F0-9]{40})\b/i);
-    const amount = line.match(/\bAmount\s*:\s*([\d,.]+)\s*([A-Za-z][A-Za-z0-9]*)?/i);
-    const hash = line.match(/\bTransaction\s*Hash\s*:\s*(0x[a-fA-F0-9]{64})\b/i);
-    const time = line.match(/\b(?:Timestamp|Time)\s*:\s*(.+)$/i);
+  // JSON evidence: accept an array, {transactions:[...]}, or a single transaction object.
+  try {
+    const json = JSON.parse(text);
+    const list = Array.isArray(json) ? json : Array.isArray(json.transactions) ? json.transactions : Array.isArray(json.transferClaims) ? json.transferClaims : json.transaction ? [json.transaction] : (json.from || json.source || json.fromAddress) ? [json] : [];
+    list.forEach((record, index) => add(record || {}, index));
+    if (output.length) return output;
+  } catch { /* Plain text and CSV are handled below. */ }
+  // CSV with common column names.
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (lines.length > 1 && /,/.test(lines[0]) && /from|source|sender/i.test(lines[0]) && /to|target|recipient/i.test(lines[0])) {
+    const headers = lines[0].split(",").map(h => h.trim().replace(/^['"]|['"]$/g, "").toLowerCase().replace(/[\s_-]+/g, ""));
+    const aliases = { from: ["from", "source", "sender", "fromaddress"], to: ["to", "target", "recipient", "toaddress"], amount: ["amount", "value", "quantity"], asset: ["asset", "currency", "token"], hash: ["hash", "transactionhash", "txhash"], time: ["time", "timestamp", "date", "blocktimestamp"] };
+    const indexFor = key => headers.findIndex(h => aliases[key].includes(h));
+    const cols = Object.fromEntries(Object.keys(aliases).map(k => [k, indexFor(k)]));
+    lines.slice(1).forEach((line, i) => {
+      const cells = line.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/).map(v => v.trim().replace(/^['"]|['"]$/g, ""));
+      add(Object.fromEntries(Object.entries(cols).filter(([, idx]) => idx >= 0).map(([key, idx]) => [key, cells[idx] || ""])), i);
+    });
+    if (output.length) return output;
+  }
+  // Labelled multiline records. Each record begins with a From/Sender line.
+  let current = {};
+  const flush = () => { if (current.from && current.to) add(current, output.length); current = {}; };
+  for (const line of lines) {
+    const from = line.match(/\b(?:From|Sender|Source|From Address)\s*[:=]\s*(0x[a-fA-F0-9]{40})\b/i);
+    const to = line.match(/\b(?:To|Recipient|Target|To Address)\s*[:=]\s*(0x[a-fA-F0-9]{40})\b/i);
+    const amount = line.match(/\b(?:Amount|Value|Quantity)\s*[:=]\s*([\d,.]+)\s*([A-Za-z][A-Za-z0-9._-]*)?/i);
+    const hash = line.match(/\b(?:Transaction\s*Hash|Tx\s*Hash|Hash)\s*[:=]\s*(0x[a-fA-F0-9]{64})\b/i);
+    const time = line.match(/\b(?:Timestamp|Time|Date|Block\s*Time)\s*[:=]\s*(.+)$/i);
     if (from && current.from && current.to) flush();
     if (from) current.from = from[1];
     if (to) current.to = to[1];
-    if (amount) current.amount = `${amount[1]} ${amount[2] || ""}`.trim();
+    if (amount) { current.amount = amount[1].replace(/,/g, ""); current.asset = amount[2] || ""; }
     if (hash) current.hash = hash[1];
     if (time) current.time = time[1].trim();
   }
   flush();
-  return txs;
-};
-const fmtDate = () => new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
-
-function Badge({ children, tone = "amber" }) {
-  return <span className={`badge badge-${tone}`}><i />{children}</span>;
+  // For narrative chats, extract addresses and hashes separately, but do not invent a transfer route.
+  return output;
 }
-function Metric({ label, value, sub, icon: Icon, tone = "cyan" }) {
-  return <div className="metric"><div className={`metric-icon ${tone}`}><Icon size={18}/></div><div className="metric-copy"><span>{label}</span><strong>{value}</strong><small>{sub}</small></div><div className="metric-line"/></div>;
+function parseDossier(text) {
+  const data = JSON.parse(text);
+  const root = data.case && typeof data.case === "object" ? data.case : data;
+  const caseObj = blankCase(root.caseName || root.name || root.title || "Imported investigation", root.caseId || root.id || makeId("TPF"));
+  caseObj.summary = root.summary || root.description || caseObj.summary;
+  caseObj.blockchain = root.blockchain || root.network || "Ethereum";
+  caseObj.reportedLoss = root.reportedLoss ?? root.estimatedLoss ?? "";
+  const evidenceList = Array.isArray(data.evidence) ? data.evidence : Array.isArray(root.evidence) ? root.evidence : [];
+  caseObj.evidence = evidenceList.map((item, index) => {
+    const content = typeof item === "string" ? item : String(item.content ?? item.text ?? item.body ?? JSON.stringify(item, null, 2));
+    return { id: item.id || `E-${String(index + 1).padStart(3, "0")}`, name: item.name || item.filename || `Imported evidence ${index + 1}`, content, addedAt: item.addedAt || new Date().toISOString(), size: new Blob([content]).size, status: item.status || "In review", type: item.type || "Imported dossier" };
+  });
+  const txs = Array.isArray(data.transactions) ? data.transactions : Array.isArray(data.transferClaims) ? data.transferClaims : Array.isArray(root.transactions) ? root.transactions : [];
+  caseObj.importedTransactions = txs.map((tx, index) => {
+    const parsed = parseTransactions(JSON.stringify(tx), `DOSSIER-${index + 1}`)[0];
+    return parsed ? { ...parsed, id: tx.id || `${caseObj.caseId}-TX-${index + 1}`, evidenceId: tx.evidenceId || "Imported dossier", status: tx.status === "VERIFIED" ? "VERIFIED" : "UNVERIFIED" } : null;
+  }).filter(Boolean);
+  const events = Array.isArray(data.timeline) ? data.timeline : Array.isArray(data.events) ? data.events : Array.isArray(root.timeline) ? root.timeline : [];
+  caseObj.manualTimeline = events.map((event, index) => ({
+    id: event.id || `${caseObj.caseId}-EV-${index + 1}`, date: event.date || event.timestamp || "", time: event.time || "", title: event.title || event.event || "Imported incident event",
+    detail: event.detail || event.description || event.text || "", source: event.source || event.evidenceId || "Imported dossier", status: event.status || "REPORTED", type: event.type || "statement",
+  }));
+  return caseObj;
 }
-function SectionHeader({ eyebrow, title, description, actions }) {
-  return <div className="section-header"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="header-actions">{actions}</div>}</div>;
-}
-function EmptyState({ icon: Icon = Files, title, text, action }) {
-  return <div className="empty-state"><div className="empty-icon"><Icon size={24}/></div><h3>{title}</h3><p>{text}</p>{action}</div>;
+function downloadBlob(filename, content, type = "application/json") {
+  const blob = new Blob([content], { type }); const url = URL.createObjectURL(blob); const a = document.createElement("a");
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export default function App() {
+  const [cases, setCases] = useState([]);
+  const [activeCaseId, setActiveCaseId] = useState("");
+  const [loaded, setLoaded] = useState(false);
   const [page, setPage] = useState("Overview");
-  const [caseName, setCaseName] = useState(DEMO.caseName);
-  const [caseId, setCaseId] = useState(DEMO.caseId);
-  const [evidence, setEvidence] = useState([]);
-  const [manualTimeline, setManualTimeline] = useState([]);
-  const [inputText, setInputText] = useState("");
-  const [inputName, setInputName] = useState("");
+  const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("All records");
   const [selectedWallet, setSelectedWallet] = useState(null);
   const [selectedTx, setSelectedTx] = useState(null);
-  const [search, setSearch] = useState("");
   const [showNotifications, setShowNotifications] = useState(false);
   const [showCaseMenu, setShowCaseMenu] = useState(false);
-  const [toast, setToast] = useState("");
-  const [loaded, setLoaded] = useState(false);
-  const [filterStatus, setFilterStatus] = useState("All records");
   const [showIntake, setShowIntake] = useState(false);
+  const [showCreateCase, setShowCreateCase] = useState(false);
+  const [showDossierImport, setShowDossierImport] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [reportTab, setReportTab] = useState("Executive summary");
+  const [inputText, setInputText] = useState("");
+  const [inputName, setInputName] = useState("");
+  const [inputType, setInputType] = useState("Source document");
+  const [newCaseName, setNewCaseName] = useState("");
+  const [newCaseSummary, setNewCaseSummary] = useState("Suspected cryptocurrency fraud · Financial transaction analysis");
+  const [newCaseChain, setNewCaseChain] = useState("Ethereum");
+  const [newCaseLoss, setNewCaseLoss] = useState("");
+  const [toast, setToast] = useState("");
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const data = JSON.parse(saved);
-        setCaseName(data.caseName || DEMO.caseName);
-        setCaseId(data.caseId || DEMO.caseId);
-        setEvidence(Array.isArray(data.evidence) ? data.evidence : []);
-        setManualTimeline(Array.isArray(data.timeline) ? data.timeline : []);
+        if (Array.isArray(data.cases) && data.cases.length) {
+          setCases(data.cases.map(c => ({ ...blankCase(c.caseName, c.caseId), ...c, evidence: Array.isArray(c.evidence) ? c.evidence : [], manualTimeline: Array.isArray(c.manualTimeline) ? c.manualTimeline : Array.isArray(c.timeline) ? c.timeline : [], importedTransactions: Array.isArray(c.importedTransactions) ? c.importedTransactions : [] })));
+          setActiveCaseId(data.activeCaseId || data.cases[0].caseId);
+        }
+      } else {
+        // Migrate the earlier single-case store without discarding user data.
+        const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+        if (legacy) {
+          const old = JSON.parse(legacy);
+          const migrated = { ...blankCase(old.caseName || "Operation Glass River", old.caseId || "TPF-2026-014"), evidence: Array.isArray(old.evidence) ? old.evidence : [], manualTimeline: Array.isArray(old.timeline) ? old.timeline : [] };
+          setCases([migrated]); setActiveCaseId(migrated.caseId);
+        } else {
+          const initial = blankCase("Operation Glass River", "TPF-2026-014");
+          setCases([initial]); setActiveCaseId(initial.caseId);
+        }
       }
-    } catch { /* keep clean state */ }
+    } catch {
+      const initial = blankCase("Operation Glass River", "TPF-2026-014"); setCases([initial]); setActiveCaseId(initial.caseId);
+    }
     setLoaded(true);
   }, []);
   useEffect(() => {
     if (!loaded) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ caseName, caseId, evidence, timeline: manualTimeline })); } catch {}
-  }, [loaded, caseName, caseId, evidence, manualTimeline]);
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(""), 3000);
-    return () => clearTimeout(timer);
-  }, [toast]);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ cases, activeCaseId, savedAt: new Date().toISOString() })); } catch { setToast("Browser storage is full. Export a case dossier to preserve your records."); }
+  }, [loaded, cases, activeCaseId]);
+  useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 4200); return () => clearTimeout(timer); }, [toast]);
 
-  const parsedTransactions = useMemo(() => evidence.flatMap((item) => parseTransactions(item.content || "", item.id)), [evidence]);
-  const transactions = parsedTransactions.length ? parsedTransactions : [];
-  const addresses = [...new Set(transactions.flatMap((tx) => [tx.source, tx.target]))];
-  const timeline = useMemo(() => {
-    const txEvents = transactions.map((tx, i) => ({
-      id: `timeline-${tx.id}`, date: (tx.time.match(/\d{4}-\d{2}-\d{2}/) || ["2026-10-10"])[0],
-      time: (tx.time.match(/\d{2}:\d{2}(?::\d{2})?/) || ["--:--"])[0],
-      title: `Transfer claim · ${tx.amount}`, detail: `${aliasFor(tx.source, addresses)} → ${aliasFor(tx.target, addresses)}`,
-      source: tx.evidenceId, status: "UNVERIFIED", type: "transaction", tx,
-    }));
-    return [...initialEvents, ...txEvents, ...manualTimeline].sort((a, b) => `${a.date || "9999"} ${a.time || "99:99"}`.localeCompare(`${b.date || "9999"} ${b.time || "99:99"}`));
-  }, [transactions, manualTimeline, addresses.join("|")]);
-  const visibleEvidence = evidence.filter((e) => `${e.name} ${e.content}`.toLowerCase().includes(search.toLowerCase()));
-  const walletDetails = selectedWallet ? {
-    address: selectedWallet,
-    alias: aliasFor(selectedWallet, addresses),
-    incoming: transactions.filter((tx) => tx.target === selectedWallet),
-    outgoing: transactions.filter((tx) => tx.source === selectedWallet),
-  } : null;
-  const trackedAmount = transactions.reduce((sum, tx) => sum + (parseFloat((tx.amount || "").replace(",", ".")) || 0), 0);
+  const activeCase = cases.find(c => c.caseId === activeCaseId) || cases[0] || blankCase();
+  const updateActiveCase = (updater) => setCases(prev => prev.map(c => c.caseId === activeCase.caseId ? { ...updater(c), updatedAt: new Date().toISOString() } : c));
+  const evidence = activeCase.evidence || [];
+  const parsedFromEvidence = useMemo(() => evidence.flatMap(item => parseTransactions(item.content || "", item.id)), [evidence]);
+  const importedTransactions = activeCase.importedTransactions || [];
+  const transactions = useMemo(() => {
+    const seen = new Set();
+    return [...parsedFromEvidence, ...importedTransactions].filter(tx => {
+      const key = `${tx.hash || ""}|${tx.source}|${tx.target}|${tx.amount}|${tx.time}|${tx.evidenceId}`;
+      if (seen.has(key)) return false; seen.add(key); return true;
+    });
+  }, [parsedFromEvidence, importedTransactions]);
+  const addresses = useMemo(() => [...new Set(transactions.flatMap(tx => [tx.source, tx.target]))], [transactions]);
+  const aliasFor = (address) => `Wallet ${String.fromCharCode(65 + Math.max(0, addresses.indexOf(address)) % 26)}${Math.floor(Math.max(0, addresses.indexOf(address)) / 26) || ""}`;
+  const txEvents = transactions.map(tx => ({ id: `timeline-${tx.id}`, date: (String(tx.time).match(/\d{4}-\d{2}-\d{2}/) || [""])[0], time: (String(tx.time).match(/\d{2}:\d{2}(?::\d{2})?/) || [""])[0], title: `Transfer claim · ${tx.amount}`, detail: `${aliasFor(tx.source)} → ${aliasFor(tx.target)}`, source: tx.evidenceId, status: tx.status === "VERIFIED" ? "VERIFIED" : "UNVERIFIED", type: "transaction", tx }));
+  const timeline = useMemo(() => [...(activeCase.manualTimeline || []), ...txEvents].sort((a, b) => `${a.date || "9999-99-99"} ${a.time || "99:99:99"}`.localeCompare(`${b.date || "9999-99-99"} ${b.time || "99:99:99"}`)), [activeCase.manualTimeline, transactions, addresses.join("|")]);
+  const visibleEvidence = evidence.filter(item => `${item.name} ${item.content} ${item.id}`.toLowerCase().includes(search.toLowerCase()));
+  const visibleTimeline = timeline.filter(event => filterStatus === "All records" || event.status === filterStatus);
+  const walletDetails = selectedWallet ? { address: selectedWallet, alias: aliasFor(selectedWallet), incoming: transactions.filter(tx => tx.target === selectedWallet), outgoing: transactions.filter(tx => tx.source === selectedWallet) } : null;
+  const openLeads = [
+    ...transactions.filter(tx => tx.status !== "VERIFIED").map(tx => ({ id: `verify-${tx.id}`, title: `Verify ${shortAddress(tx.hash) || "transfer claim"}`, detail: `${tx.evidenceId} · ${aliasFor(tx.source)} → ${aliasFor(tx.target)}`, priority: "HIGH", category: "TRANSACTION" })),
+    ...evidence.filter(item => !item.content.trim()).map(item => ({ id: `empty-${item.id}`, title: `Review ${item.name}`, detail: "No readable text was extracted from this source.", priority: "MEDIUM", category: "EVIDENCE" })),
+  ];
   const nodePositions = useMemo(() => {
-    const inMap = new Map(addresses.map((a) => [a, 0]));
-    const outMap = new Map(addresses.map((a) => [a, []]));
-    transactions.forEach((tx) => { inMap.set(tx.target, (inMap.get(tx.target) || 0) + 1); outMap.get(tx.source)?.push(tx.target); });
-    const depth = new Map();
-    const q = addresses.filter((a) => !inMap.get(a)).map((a) => [a, 0]);
-    while (q.length) {
-      const [a, d] = q.shift();
-      if (depth.has(a)) continue;
-      depth.set(a, d);
-      (outMap.get(a) || []).forEach((t) => { if (!depth.has(t)) q.push([t, d + 1]); });
-    }
-    addresses.forEach((a) => { if (!depth.has(a)) depth.set(a, 0); });
-    const layers = new Map();
-    addresses.forEach((a) => { const d = depth.get(a); if (!layers.has(d)) layers.set(d, []); layers.get(d).push(a); });
-    const pos = new Map();
-    [...layers.entries()].sort((a,b)=>a[0]-b[0]).forEach(([d, arr]) => arr.forEach((a,i)=>pos.set(a,{x:d*290+60,y:i*155+60})));
-    return pos;
+    const indegree = new Map(addresses.map(a => [a, 0])); const outgoing = new Map(addresses.map(a => [a, []]));
+    transactions.forEach(tx => { indegree.set(tx.target, (indegree.get(tx.target) || 0) + 1); outgoing.get(tx.source)?.push(tx.target); });
+    const depth = new Map(); const queue = addresses.filter(a => !(indegree.get(a) || 0)).map(a => [a, 0]);
+    while (queue.length) { const [address, d] = queue.shift(); if (depth.has(address)) continue; depth.set(address, d); (outgoing.get(address) || []).forEach(target => { if (!depth.has(target)) queue.push([target, d + 1]); }); }
+    addresses.forEach(a => { if (!depth.has(a)) depth.set(a, 0); });
+    const layers = new Map(); addresses.forEach(a => { const d = depth.get(a); if (!layers.has(d)) layers.set(d, []); layers.get(d).push(a); });
+    const positions = new Map(); [...layers.entries()].sort((a,b) => a[0] - b[0]).forEach(([d, list]) => list.forEach((a,i) => positions.set(a, { x: d * 360 + 55, y: i * 185 + 45 })));
+    return positions;
   }, [transactions, addresses.join("|")]);
-  const nodes = addresses.map((address) => {
-    const incoming = transactions.filter((tx) => tx.target === address);
-    const outgoing = transactions.filter((tx) => tx.source === address);
+  const nodes = addresses.map(address => {
+    const incoming = transactions.filter(tx => tx.target === address); const outgoing = transactions.filter(tx => tx.source === address);
     const source = !incoming.length, destination = !outgoing.length;
-    return {
-      id: address, position: nodePositions.get(address) || { x: 0, y: 0 },
-      data: { label: `${aliasFor(address, addresses)}\n${incoming.length} IN  /  ${outgoing.length} OUT`, address },
-      style: { width: 178, minHeight: 84, borderRadius: 12, border: `1px solid ${source ? "#4cc9e8" : destination ? "#f36f61" : "#b88cff"}`, background: source ? "linear-gradient(135deg,#112a37,#14212d)" : destination ? "linear-gradient(135deg,#34201f,#211d25)" : "linear-gradient(135deg,#24213c,#191e2b)", color: "#edf5fb", fontSize: 12, fontWeight: 700, lineHeight: 1.8, whiteSpace: "pre-line", padding: 14, boxShadow: source ? "0 0 24px #4cc9e822" : destination ? "0 0 24px #f36f6122" : "0 0 24px #b88cff18" },
-    };
+    const border = source ? "#a78bfa" : destination ? "#f0abfc" : "#c4b5fd";
+    return { id: address, position: nodePositions.get(address) || { x: 0, y: 0 }, data: { label: `${aliasFor(address)}\n${incoming.length} IN  /  ${outgoing.length} OUT` }, style: { width: 218, minHeight: 104, borderRadius: 12, border: `1px solid ${border}`, background: source ? "linear-gradient(135deg,#30205a,#1b1833)" : destination ? "linear-gradient(135deg,#51234f,#25172f)" : "linear-gradient(135deg,#38285f,#201b3b)", color: "#edf5fb", fontSize: 15, fontWeight: 750, lineHeight: 1.75, whiteSpace: "pre-line", padding: 17, boxShadow: selectedWallet === address ? `0 0 0 2px ${border}66,0 0 25px ${border}33` : "none" } };
   });
-  const edges = transactions.map((tx) => ({
-    id: tx.id, source: tx.source, target: tx.target, type: "smoothstep",
-    label: `${tx.amount}  ·  ${tx.evidenceId}`, markerEnd: { type: MarkerType.ArrowClosed },
-    style: { stroke: "#4cc9e8", strokeWidth: 2 }, labelStyle: { fill: "#d9f6ff", fontSize: 10, fontWeight: 700 },
-    labelBgStyle: { fill: "#101c27", fillOpacity: 0.98 }, labelBgPadding: [6, 4], labelBgBorderRadius: 4,
-  }));
+  const edges = transactions.map(tx => ({ id: tx.id, source: tx.source, target: tx.target, type: "smoothstep", label: `${tx.amount} · ${tx.evidenceId}`, markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: selectedTx?.id === tx.id ? "#f5c0ff" : tx.status === "VERIFIED" ? "#86efac" : "#a78bfa", strokeWidth: selectedTx?.id === tx.id ? 3.5 : 2 }, labelStyle: { fill: "#f3e8ff", fontSize: 13, fontWeight: 750 }, labelBgStyle: { fill: "#211735", fillOpacity: .99 }, labelBgPadding: [6, 4], labelBgBorderRadius: 4 }));
 
-  const addEvidence = (name, content) => {
-    if (!content.trim()) { setToast("Add evidence text or choose a file first."); return; }
-    const id = `E-${String(evidence.length + 1).padStart(3, "0")}`;
-    const record = { id, name: name || `Evidence ${id}.txt`, content, addedAt: new Date().toISOString(), size: new Blob([content]).size, status: "In review" };
-    setEvidence((prev) => [...prev, record]);
-    const txCount = parseTransactions(content, id).length;
-    setManualTimeline((prev) => [...prev, { id: `import-${id}`, date: new Date().toISOString().slice(0,10), time: new Date().toLocaleTimeString("en-GB"), title: "Evidence item ingested", detail: `${record.name} added to the evidence vault. ${txCount} transfer claim(s) parsed.`, source: id, status: "RECORDED", type: "evidence" }]);
-    setInputText(""); setInputName(""); setShowIntake(false); setToast(`${record.name} added · ${txCount} transfer claim(s) detected.`);
+  const addEvidenceRecord = (name, content, type = "Source document") => {
+    if (!String(content || "").trim()) return null;
+    const id = makeId("E");
+    const record = { id, name: name || `Evidence ${id}.txt`, content: String(content), type, addedAt: new Date().toISOString(), size: new Blob([String(content)]).size, status: "In review" };
+    const count = parseTransactions(record.content, id).length;
+    const event = { id: makeId("EV"), date: new Date().toISOString().slice(0, 10), time: new Date().toLocaleTimeString("en-GB"), title: "Evidence item ingested", detail: `${record.name} added to the evidence register. ${count} transfer claim(s) extracted.`, source: id, status: "RECORDED", type: "evidence" };
+    updateActiveCase(c => ({ ...c, evidence: [...(c.evidence || []), record], manualTimeline: [...(c.manualTimeline || []), event] }));
+    return { record, count };
   };
   const handleFiles = async (files) => {
-    for (const file of Array.from(files || [])) {
-      try { const content = await file.text(); addEvidence(file.name, content); }
-      catch { setToast(`Could not read ${file.name}.`); }
+    const fileList = Array.from(files || []); if (!fileList.length) return;
+    const records = [];
+    for (const file of fileList) {
+      try {
+        const content = await file.text();
+        if (file.name.toLowerCase().endsWith(".json")) {
+          try {
+            const json = JSON.parse(content);
+            if ((json.case || json.caseName || json.caseId) && (Array.isArray(json.evidence) || Array.isArray(json.transactions) || Array.isArray(json.timeline) || Array.isArray(json.events))) {
+              const imported = parseDossier(content);
+              const duplicate = cases.some(c => c.caseId === imported.caseId);
+              if (duplicate) imported.caseId = `${imported.caseId}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+              setCases(prev => [...prev, imported]); setActiveCaseId(imported.caseId);
+              records.push(`${file.name}: imported dossier (${imported.evidence.length} evidence item(s), ${imported.importedTransactions.length} transaction(s))`);
+              continue;
+            }
+          } catch { /* A JSON file may be a normal evidence artifact. */ }
+        }
+        const result = addEvidenceRecord(file.name, content, file.name.split(".").pop()?.toUpperCase() || "Source document");
+        if (result) records.push(`${file.name}: ${result.count} transfer claim(s)`);
+      } catch { records.push(`${file.name}: could not read file`); }
     }
+    setInputText(""); setInputName(""); setShowIntake(false);
+    setToast(records.length ? `Batch processed: ${records.join(" · ")}` : "No readable evidence files were selected.");
+  };
+  const createCase = () => {
+    if (!newCaseName.trim()) { setToast("Enter an investigation title first."); return; }
+    let id = `TPF-${new Date().getFullYear()}-${String(cases.length + 1).padStart(3, "0")}`;
+    while (cases.some(c => c.caseId === id)) id = `TPF-${new Date().getFullYear()}-${String(cases.length + Math.floor(Math.random() * 900) + 100).padStart(3, "0")}`;
+    const created = { ...blankCase(newCaseName.trim(), id), summary: newCaseSummary.trim() || "Suspected cryptocurrency fraud", blockchain: newCaseChain, reportedLoss: newCaseLoss.trim() };
+    setCases(prev => [...prev, created]); setActiveCaseId(id); setPage("Overview"); setShowCreateCase(false); setNewCaseName(""); setNewCaseSummary("Suspected cryptocurrency fraud · Financial transaction analysis"); setNewCaseChain("Ethereum"); setNewCaseLoss(""); setSelectedWallet(null); setSelectedTx(null); setToast(`Investigation ${id} created. It has a separate evidence vault and timeline.`);
+  };
+  const importDossierFile = async (file) => {
+    if (!file) return;
+    try {
+      const imported = parseDossier(await file.text());
+      let finalId = imported.caseId;
+      if (cases.some(c => c.caseId === finalId)) { finalId = `${finalId}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`; imported.caseId = finalId; }
+      setCases(prev => [...prev, imported]); setActiveCaseId(finalId); setPage("Overview"); setShowDossierImport(false); setToast(`Imported ${imported.caseName}: ${imported.evidence.length} evidence item(s), ${imported.importedTransactions.length} transfer claim(s), ${(imported.manualTimeline || []).length} event(s).`);
+    } catch (error) { setToast(`Could not import dossier: ${error.message || "invalid JSON structure"}`); }
+  };
+  const exportDossier = () => {
+    const dossier = { schemaVersion: 1, exportedAt: new Date().toISOString(), case: { caseId: activeCase.caseId, caseName: activeCase.caseName, summary: activeCase.summary, blockchain: activeCase.blockchain, reportedLoss: activeCase.reportedLoss, createdAt: activeCase.createdAt, updatedAt: activeCase.updatedAt }, evidence: activeCase.evidence || [], transactions: transactions.map(tx => ({ ...tx })), timeline: activeCase.manualTimeline || [], limitations: ["Local case dossier; no server-side chain of custody.", "Transfer claims parsed from submitted records are not independently verified unless explicitly marked VERIFIED after external verification.", "Wallet labels are aliases, not identity attribution."] };
+    downloadBlob(`${safeFileName(activeCase.caseId)}-case-dossier.json`, JSON.stringify(dossier, null, 2)); setToast("Case dossier exported. Re-import this JSON to restore the investigation.");
   };
   const exportReport = () => {
-    const report = {
-      platform: "TRACEPOINT FORENSICS", case: { caseId, caseName, exportedAt: new Date().toISOString() },
-      evidence: evidence.map(({id,name,size,addedAt,status})=>({id,name,size,addedAt,status})),
-      submittedTransferClaims: transactions.map((tx)=>({ ...tx, source: aliasFor(tx.source,addresses), target: aliasFor(tx.target,addresses) })),
-      timeline: timeline.map(({date,time,title,detail,source,status})=>({date,time,title,detail,source,status})),
-      limitations: ["Transfer records are parsed from submitted text.", "Wallet aliases are display labels only.", "No transaction is independently verified by this local demo."],
-    };
-    const blob = new Blob([JSON.stringify(report,null,2)],{type:"application/json"});
-    const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href=url; a.download=`${caseId}-investigation-report.json`; a.click(); URL.revokeObjectURL(url);
-    setToast("Investigation report exported.");
+    const report = { platform: "TRACEPOINT FORENSICS", case: { caseId: activeCase.caseId, caseName: activeCase.caseName, summary: activeCase.summary, blockchain: activeCase.blockchain, reportedLoss: activeCase.reportedLoss, exportedAt: new Date().toISOString() }, summary: { evidenceItems: evidence.length, walletEntities: addresses.length, transferClaims: transactions.length, verifiedTransfers: transactions.filter(tx => tx.status === "VERIFIED").length, openLeads: openLeads.length }, evidence: evidence.map(({ id, name, type, size, addedAt, status }) => ({ id, name, type, size, addedAt, status })), transferClaims: transactions.map(tx => ({ ...tx, sourceAlias: aliasFor(tx.source), targetAlias: aliasFor(tx.target) })), timeline: timeline.map(({ date, time, title, detail, source, status, type }) => ({ date, time, title, detail, source, status, type })), openLeads, limitations: ["Submitted transfer records are not independently verified by this local application.", "Wallet aliases are display labels and do not establish real-world ownership.", "Correlation indicates a possible investigative lead, not proof of fraud or intent.", "Preserve original evidence separately and independently verify transaction hashes on the stated blockchain."] };
+    downloadBlob(`${safeFileName(activeCase.caseId)}-investigation-report.json`, JSON.stringify(report, null, 2)); setToast("Evidence-backed investigation JSON report exported.");
   };
-  const copyAddress = async (address) => {
-    try { await navigator.clipboard.writeText(address); setToast("Full wallet address copied."); } catch { setToast("Clipboard access is unavailable."); }
+  const exportFreezeDraft = () => {
+    const text = `DRAFT ASSET PRESERVATION / FREEZE REQUEST\nHUMAN REVIEW REQUIRED · NOT SUBMITTED\n\nCase ID: ${activeCase.caseId}\nCase title: ${activeCase.caseName}\nBlockchain/network: ${activeCase.blockchain || "Not specified"}\nReported loss: ${activeCase.reportedLoss || "Not specified"}\n\nREQUEST SUMMARY\nThe investigating party requests review of the attached evidence and, where legally authorised and supported by verified records, consideration of preservation or restriction measures by the relevant exchange, custodian, or competent authority. This draft does not assert that any address is owned by a named person.\n\nWALLET ADDRESSES FOR REVIEW\n${addresses.length ? addresses.map(a => `- ${a} (${aliasFor(a)}); inbound claims: ${transactions.filter(t=>t.target===a).length}; outbound claims: ${transactions.filter(t=>t.source===a).length}`).join("\n") : "- No wallet addresses extracted."}\n\nTRANSFER CLAIMS REQUIRING INDEPENDENT VERIFICATION\n${transactions.length ? transactions.map((t,i)=>`${i+1}. ${t.source} -> ${t.target}; amount: ${t.amount}; timestamp: ${t.time || "not supplied"}; hash: ${t.hash || "not supplied"}; source: ${t.evidenceId}; status: ${t.status}`).join("\n") : "No transfer claims extracted."}\n\nEVIDENCE REGISTER\n${evidence.length ? evidence.map(e=>`- ${e.id}: ${e.name} (${e.type || "source document"})`).join("\n") : "- No evidence records."}\n\nREQUIRED REVIEW BEFORE SUBMISSION\n1. Independently verify transaction hashes, network, asset, amount, and timestamp.\n2. Confirm the receiving institution and appropriate legal process/jurisdiction.\n3. Attach originals and document acquisition and chain-of-custody procedures.\n4. Remove unsupported claims and obtain authorised investigator/legal review.\n\nGenerated ${new Date().toISOString()} by TRACEPOINT local workspace. This is a draft template, not legal advice and not a filed request.`;
+    downloadBlob(`${safeFileName(activeCase.caseId)}-asset-preservation-request-draft.txt`, text, "text/plain;charset=utf-8"); setToast("Draft asset-preservation request exported for human review. Nothing was submitted.");
+  };
+  const copyAddress = async address => {
+    if (isPlaceholderHex(address)) { setToast("This is a repeated-digit demo placeholder, not a usable wallet address. Replace it with a source address."); return; }
+    try { await navigator.clipboard.writeText(address); setToast("Wallet identifier copied."); }
+    catch { setToast("Clipboard access is unavailable in this browser context."); }
+  };
+  const editCase = () => {
+    const name = window.prompt("Investigation title", activeCase.caseName); if (name === null) return;
+    const summary = window.prompt("Incident summary", activeCase.summary || ""); if (summary === null) return;
+    updateActiveCase(c => ({ ...c, caseName: name.trim() || c.caseName, summary: summary.trim() })); setToast("Investigation details updated.");
+  };
+  const removeEvidence = item => {
+    if (!window.confirm(`Remove ${item.name} from this case's local evidence register?`)) return;
+    updateActiveCase(c => ({ ...c, evidence: (c.evidence || []).filter(e => e.id !== item.id), manualTimeline: [...(c.manualTimeline || []), { id: makeId("EV"), date: new Date().toISOString().slice(0,10), time: new Date().toLocaleTimeString("en-GB"), title: "Evidence record removed from workspace", detail: `${item.name} (${item.id}) removed from the local register. Preserve original material separately.`, source: item.id, status: "RECORDED", type: "evidence" }] })); setToast("Evidence removed from this local case register.");
+  };
+  const removeCase = () => {
+    if (cases.length <= 1) { setToast("At least one investigation must remain in the workspace."); return; }
+    if (!window.confirm(`Delete ${activeCase.caseName} (${activeCase.caseId}) and its local records? Export a dossier first if you need a copy.`)) return;
+    const remaining = cases.filter(c => c.caseId !== activeCase.caseId); setCases(remaining); setActiveCaseId(remaining[0].caseId); setSelectedWallet(null); setSelectedTx(null); setToast("Investigation removed from local workspace.");
   };
 
-  const renderTimeline = (compact = false) => <div className={`timeline-list ${compact ? "compact" : ""}`}>
-    {timeline.map((event, i) => <div className="timeline-item" key={event.id || `${event.title}-${i}`}>
-      <div className={`timeline-marker ${event.type || "statement"}`}>{event.type === "transaction" ? <GitBranch size={13}/> : event.type === "evidence" ? <Files size={13}/> : <CircleDot size={13}/>}</div>
-      <div className="timeline-content"><div className="timeline-meta"><span>{event.date || "Date not supplied"} · {event.time || "--:--"}</span><Badge tone={event.status === "UNVERIFIED" ? "amber" : event.status === "RECORDED" ? "cyan" : "slate"}>{event.status || "REPORTED"}</Badge></div>
-        <h3>{event.title}</h3><p>{event.detail}</p><small>{event.source || "Case notes"}{event.tx?.hash ? ` · Hash ${shortAddress(event.tx.hash)}` : ""}</small>
-      </div>
-    </div>)}
+  const renderTimeline = (compact = false, items = timeline) => <div className={`timeline-list ${compact ? "compact" : ""}`}>
+    {items.length ? items.map((event, i) => <div className="timeline-item" key={event.id || `${event.title}-${i}`}><div className={`timeline-marker ${event.type || "statement"}`}>{event.type === "transaction" ? <GitBranch size={13}/> : event.type === "evidence" ? <Files size={13}/> : <CircleDot size={13}/>}</div><div className="timeline-content"><div className="timeline-meta"><span>{event.date || "Date not supplied"} · {event.time || "Time not supplied"}</span><Badge tone={event.status === "UNVERIFIED" ? "amber" : event.status === "VERIFIED" ? "green" : event.status === "RECORDED" ? "cyan" : "slate"}>{event.status || "REPORTED"}</Badge></div><h3>{event.title}</h3><p>{event.detail}</p><small className="timeline-source-line"><span>Source: {event.source || "Case notes"}</span>{event.tx?.hash ? <span>Tx hash: {shortAddress(event.tx.hash)}</span> : null}</small>{event.tx && <div className="timeline-evidence-grid"><div><span>ROUTE</span><strong>{aliasFor(event.tx.source)} → {aliasFor(event.tx.target)}</strong></div><div><span>AMOUNT</span><strong>{event.tx.amount || "Not supplied"}</strong></div><div><span>CLAIM BASIS</span><strong>{event.tx.status === "VERIFIED" ? "Marked verified in imported record" : "Submitted claim · not independently verified"}</strong></div></div>}{event.tx && <button className="text-btn timeline-open-tx" onClick={() => { setSelectedTx(event.tx); setSelectedWallet(event.tx.source); setPage("Fund Tracing"); }}>Inspect transfer in fund tracing <ArrowUpRight size={14}/></button>}</div></div>) : <EmptyState icon={Clock3} title="No events match this filter" text="Ingest evidence or add a case dossier with incident events. This timeline does not add fictional events."/>}
   </div>;
 
-  const renderNetwork = () => <div className="network-layout">
-    <div className="panel network-panel"><div className="panel-head"><div><div className="eyebrow">RELATIONSHIP ANALYSIS</div><h2>Entity network</h2><p>Nodes use human-readable aliases. Select a wallet to inspect its submitted links.</p></div><div className="panel-head-actions"><span className="live-dot"/> {addresses.length} entities · {transactions.length} links</div></div>
-      <div className="network-canvas">{addresses.length ? <ReactFlow nodes={nodes} edges={edges} fitView fitViewOptions={{padding:.22,minZoom:.25,maxZoom:1.2}} onNodeClick={(_,node)=>{setSelectedWallet(node.id);setSelectedTx(null);}} proOptions={{hideAttribution:true}}><Background color="#243748" gap={22} size={1}/><Controls/><MiniMap nodeColor={(n)=>n.style?.border?.includes("#4cc9e8")?"#4cc9e8":n.style?.border?.includes("#f36f61")?"#f36f61":"#b88cff"} maskColor="rgba(6,12,20,.7)"/></ReactFlow> : <EmptyState icon={Network} title="No entity links yet" text="Upload a text, CSV, or log file containing From:, To:, and Amount: fields to construct the network." action={<button className="btn btn-primary" onClick={()=>setShowIntake(true)}><Plus size={15}/> Add evidence</button>}/>}</div>
-      <div className="network-legend"><span><i className="legend-source"/>Origin node</span><span><i className="legend-middle"/>Intermediate node</span><span><i className="legend-end"/>Destination node</span><span className="legend-note">Connections reflect submitted claims, not verified movement.</span></div>
+  const renderNetwork = () => <>
+    <div className="analysis-intro panel">
+      <div className="analysis-intro-copy"><div className="eyebrow">{page === "Fund Tracing" ? "TRANSACTION PATH ANALYSIS" : "ENTITY RELATIONSHIP MAP"}</div>
+        <h2>{page === "Fund Tracing" ? "Follow the movement of funds" : "Understand the wallet ecosystem"}</h2>
+        <p>{page === "Fund Tracing" ? "Review every submitted transfer claim in sequence, inspect the evidence source, and separate reported movement from independently verified activity." : "Explore wallet entities, their inbound and outbound claims, and the evidence records that connect them. Aliases are display labels, not identity attribution."}</p>
+      </div>
+      <div className="analysis-kpis">
+        <div><span>WALLET ENTITIES</span><strong>{addresses.length}</strong><small>Unique addresses in this case</small></div>
+        <div><span>TRANSFER CLAIMS</span><strong>{transactions.length}</strong><small>Edges extracted from records</small></div>
+        <div><span>NEED VERIFICATION</span><strong>{transactions.filter(tx => tx.status !== "VERIFIED").length}</strong><small>Claims not marked verified</small></div>
+        <div><span>EVIDENCE SOURCES</span><strong>{evidence.length}</strong><small>Items in the active case vault</small></div>
+      </div>
     </div>
-    <aside className="panel inspector">{walletDetails ? <>
-      <div className="panel-head"><div><div className="eyebrow">ENTITY INSPECTOR</div><h2>{walletDetails.alias}</h2></div><button className="icon-btn" onClick={()=>setSelectedWallet(null)}><X size={16}/></button></div>
-      <div className="inspector-body"><div className="entity-stamp"><Fingerprint size={24}/><div><strong>Wallet entity</strong><small>Attribution not established</small></div></div>
-        <div className="address-box"><label>FULL ADDRESS</label><code>{walletDetails.address}</code><button className="icon-btn" onClick={()=>copyAddress(walletDetails.address)} title="Copy full address"><Copy size={15}/></button></div>
-        <div className="inspector-stats"><div><span>Incoming</span><strong>{walletDetails.incoming.length}</strong></div><div><span>Outgoing</span><strong>{walletDetails.outgoing.length}</strong></div><div><span>Linked claims</span><strong>{walletDetails.incoming.length+walletDetails.outgoing.length}</strong></div></div>
-        <h3 className="subheading">Incoming transfer claims</h3>
-        {walletDetails.incoming.length ? walletDetails.incoming.map(tx=><button className="tx-mini" key={tx.id} onClick={()=>setSelectedTx(tx)}><ArrowDownLeft size={16}/><span><strong>{tx.amount}</strong><small>{aliasFor(tx.source,addresses)} · {tx.evidenceId}</small></span><ChevronDown size={14}/></button>) : <p className="muted">No incoming claims in submitted evidence.</p>}
-        <h3 className="subheading">Outgoing transfer claims</h3>
-        {walletDetails.outgoing.length ? walletDetails.outgoing.map(tx=><button className="tx-mini" key={tx.id} onClick={()=>setSelectedTx(tx)}><ArrowUpRight size={16}/><span><strong>{tx.amount}</strong><small>{aliasFor(tx.target,addresses)} · {tx.evidenceId}</small></span><ChevronDown size={14}/></button>) : <p className="muted">No outgoing claims in submitted evidence.</p>}
-        {selectedTx && <div className="tx-detail"><div className="tx-detail-head"><strong>Transfer detail</strong><button className="icon-btn" onClick={()=>setSelectedTx(null)}><X size={14}/></button></div><p><span>Route</span>{aliasFor(selectedTx.source,addresses)} → {aliasFor(selectedTx.target,addresses)}</p><p><span>Timestamp</span>{selectedTx.time || "Not supplied"}</p><p><span>Evidence</span>{selectedTx.evidenceId}</p><p><span>Transaction hash</span><code>{selectedTx.hash || "Not supplied"}</code></p><Badge tone="amber">UNVERIFIED CLAIM</Badge></div>}
-        <div className="notice"><AlertTriangle size={15}/><p>Alias is a display label only. A connected edge does not establish ownership, intent, or a confirmed blockchain transfer.</p></div>
-      </div>
-    </> : <EmptyState icon={ScanSearch} title="Select an entity" text="Click any wallet node in the network to inspect addresses, inbound and outbound claims, evidence references, and transaction details."/>}</aside>
-  </div>;
-
-  const renderOverview = () => <><SectionHeader eyebrow="CASE INTELLIGENCE / OVERVIEW" title="Investigation overview" description="A consolidated view of evidence, transfer claims, and outstanding investigative leads." actions={<><button className="btn" onClick={exportReport}><Download size={15}/> Export report</button><button className="btn btn-primary" onClick={()=>setShowIntake(true)}><Plus size={15}/> Add evidence</button></>}/>
-    <div className="case-banner"><div className="case-emblem"><Shield size={24}/></div><div className="case-banner-main"><div className="eyebrow">ACTIVE INVESTIGATION · {caseId}</div><h2>{caseName}</h2><p>Suspected investment fraud · Financial transaction analysis</p></div><div className="case-banner-right"><Badge tone="amber">IN REVIEW</Badge><span>Updated {fmtDate()}</span></div></div>
-    <div className="metrics-grid"><Metric label="Evidence items" value={evidence.length} sub="In evidence vault" icon={Files} tone="cyan"/><Metric label="Wallet entities" value={addresses.length} sub="Unique addresses parsed" icon={Network} tone="violet"/><Metric label="Transfer claims" value={transactions.length} sub="Not independently verified" icon={GitBranch} tone="amber"/><Metric label="Open leads" value={Math.max(3,transactions.length)} sub="Require corroboration" icon={SearchCheck} tone="red"/></div>
-    <div className="overview-grid"><div className="panel"><div className="panel-head"><div><div className="eyebrow">CASE ACTIVITY</div><h2>Recent investigation events</h2></div><button className="text-btn" onClick={()=>setPage("Investigation Timeline")}>View full timeline <ArrowUpRight size={14}/></button></div>{renderTimeline(true)}</div>
-      <div className="panel"><div className="panel-head"><div><div className="eyebrow">PRIORITY REVIEW</div><h2>Outstanding leads</h2></div><Badge tone="red">3 OPEN</Badge></div><div className="lead-list"><div className="lead"><div className="lead-icon red"><AlertTriangle size={17}/></div><div><strong>Verify transaction records</strong><p>Check hashes and transfer details against the correct network.</p><span>HIGH PRIORITY · TRANSACTION</span></div></div><div className="lead"><div className="lead-icon amber"><Fingerprint size={17}/></div><div><strong>Establish entity attribution</strong><p>No wallet has an independently established owner.</p><span>ATTRIBUTION · OPEN</span></div></div><div className="lead"><div className="lead-icon cyan"><Files size={17}/></div><div><strong>Preserve source material</strong><p>Retain original exports and document acquisition provenance.</p><span>EVIDENCE INTEGRITY · OPEN</span></div></div></div><div className="panel-footnote"><LockKeyhole size={14}/> Local workspace · No live chain verification connected</div></div></div>
-    <div className="panel"><div className="panel-head"><div><div className="eyebrow">EVIDENCE VAULT</div><h2>Recently added evidence</h2></div><button className="text-btn" onClick={()=>setPage("Evidence Vault")}>Open vault <ArrowUpRight size={14}/></button></div>{evidence.length ? <div className="evidence-table">{evidence.slice(-4).reverse().map(e=><div className="evidence-row" key={e.id}><div className="file-type"><FileText size={18}/></div><div className="evidence-name"><strong>{e.name}</strong><small>{e.id} · {Math.max(1,Math.round((e.size||0)/1024))} KB · Added {new Date(e.addedAt).toLocaleString()}</small></div><Badge tone="cyan">{e.status || "In review"}</Badge><button className="icon-btn" onClick={()=>setPage("Evidence Vault")}><ExternalLink size={15}/></button></div>)}</div> : <EmptyState icon={Files} title="Evidence vault is empty" text="Ingest a source file to begin extracting wallet relationships and reconstructing the incident timeline." action={<button className="btn btn-primary" onClick={()=>setShowIntake(true)}><Upload size={15}/> Ingest evidence</button>}/>}</div>
+    <div className="network-layout"><div className="panel network-panel"><div className="panel-head"><div><div className="eyebrow">RELATIONSHIP ANALYSIS</div><h2>{page === "Fund Tracing" ? "Fund tracing workspace" : "Entity network"}</h2><p>Click a wallet to inspect it. Click an edge to inspect its transfer claim and source.</p></div><div className="panel-head-actions"><span className="live-dot"/> {addresses.length} entities · {transactions.length} links</div></div>
+    <div className="network-canvas">{addresses.length ? <ReactFlow nodes={nodes} edges={edges} fitView fitViewOptions={{ padding: .12, minZoom: .38, maxZoom: 1.5 }} onNodeClick={(_, node) => { setSelectedWallet(node.id); setSelectedTx(null); }} onEdgeClick={(_, edge) => { const tx = transactions.find(item => item.id === edge.id); if (tx) { setSelectedTx(tx); setSelectedWallet(tx.source); } }} proOptions={{ hideAttribution: true }}><Background color="#49345f" gap={24} size={1}/><Controls/><MiniMap nodeColor={n => n.style?.border?.includes("#a78bfa") ? "#a78bfa" : n.style?.border?.includes("#f0abfc") ? "#f0abfc" : "#c4b5fd"} maskColor="rgba(6,12,20,.7)"/></ReactFlow> : <EmptyState icon={Network} title="No transaction network yet" text="Import a case dossier or ingest source evidence containing sender and recipient wallet addresses. Chat text alone will not create an invented transfer edge." action={<button className="btn btn-primary" onClick={() => setShowIntake(true)}><Plus size={15}/> Add evidence</button>}/>}</div>
+    <div className="network-legend"><span><i className="legend-source"/>Origin node</span><span><i className="legend-middle"/>Intermediate node</span><span><i className="legend-end"/>Destination node</span><span className="legend-note">Edges reflect submitted claims unless independently verified.</span></div></div>
+    <aside className="panel inspector">{walletDetails ? <><div className="panel-head"><div><div className="eyebrow">ENTITY INSPECTOR</div><h2>{walletDetails.alias}</h2></div><button className="icon-btn" onClick={() => { setSelectedWallet(null); setSelectedTx(null); }}><X size={16}/></button></div><div className="inspector-body"><div className="entity-stamp"><Fingerprint size={24}/><div><strong>Wallet entity</strong><small>Attribution not established</small></div></div><div className="address-box"><label>ENTITY IDENTIFIER</label><code className="entity-readable-name">{walletDetails.alias}</code><small className="address-note">{isPlaceholderHex(walletDetails.address) ? "Synthetic placeholder detected · replace with a source wallet address" : `${activeCase.blockchain || "Blockchain"} address · ownership not established`}</small><button className="icon-btn" onClick={() => copyAddress(walletDetails.address)} title={isPlaceholderHex(walletDetails.address) ? "Placeholder address cannot be copied as verified data" : "Copy source wallet address"} disabled={isPlaceholderHex(walletDetails.address)}><Copy size={15}/></button></div><div className="inspector-stats"><div><span>Incoming</span><strong>{walletDetails.incoming.length}</strong></div><div><span>Outgoing</span><strong>{walletDetails.outgoing.length}</strong></div><div><span>Linked claims</span><strong>{walletDetails.incoming.length + walletDetails.outgoing.length}</strong></div></div>
+      <h3 className="subheading">Incoming transfer claims</h3>{walletDetails.incoming.length ? walletDetails.incoming.map(tx => <button className="tx-mini" key={tx.id} onClick={() => setSelectedTx(tx)}><ArrowDownLeft size={16}/><span><strong>{tx.amount}</strong><small>{aliasFor(tx.source)} · {tx.evidenceId}</small></span><ChevronDown size={14}/></button>) : <p className="muted">No incoming claims in this case.</p>}
+      <h3 className="subheading">Outgoing transfer claims</h3>{walletDetails.outgoing.length ? walletDetails.outgoing.map(tx => <button className="tx-mini" key={tx.id} onClick={() => setSelectedTx(tx)}><ArrowUpRight size={16}/><span><strong>{tx.amount}</strong><small>{aliasFor(tx.target)} · {tx.evidenceId}</small></span><ChevronDown size={14}/></button>) : <p className="muted">No outgoing claims in this case.</p>}
+      {selectedTx && <div className="tx-detail"><div className="tx-detail-head"><strong>Transfer detail</strong><button className="icon-btn" onClick={() => setSelectedTx(null)}><X size={14}/></button></div><p><span>Route</span>{aliasFor(selectedTx.source)} → {aliasFor(selectedTx.target)}</p><p><span>Amount / asset</span>{selectedTx.amount}</p><p><span>Timestamp</span>{selectedTx.time || "Not supplied"}</p><p><span>Evidence source</span>{selectedTx.evidenceId}</p><p><span>Transaction hash</span><code>{selectedTx.hash || "Not supplied"}</code></p><p><span>Claim status</span><Badge tone={selectedTx.status === "VERIFIED" ? "green" : "amber"}>{selectedTx.status || "UNVERIFIED"}</Badge></p>{selectedTx.hash && <button className="btn" onClick={() => copyAddress(selectedTx.hash)}><Copy size={13}/> Copy transaction hash</button>}</div>}
+      <div className="notice"><AlertTriangle size={15}/><p>A connected edge does not establish ownership, intent, or confirmed blockchain movement. Verify transaction hashes against the correct network.</p></div></div></> : <EmptyState icon={ScanSearch} title="Select an entity" text="Select a wallet node or transfer edge to inspect submitted links, amounts, timestamps, hashes and evidence references."/>}</aside></div>
+    {page === "Fund Tracing" && <div className="panel transfer-ledger-panel"><div className="panel-head"><div><div className="eyebrow">TRANSFER REGISTER</div><h2>Trace ledger</h2><p>Each row is a parsed or imported claim. Missing hashes and timestamps remain explicitly missing.</p></div><Badge tone="amber">{transactions.filter(tx => tx.status !== "VERIFIED").length} UNVERIFIED</Badge></div>
+      {transactions.length ? <div className="trace-ledger">{transactions.map((tx, index) => <button className={`trace-ledger-row ${selectedTx?.id === tx.id ? "selected" : ""}`} key={tx.id} onClick={() => { setSelectedTx(tx); setSelectedWallet(tx.source); }}><span className="trace-step">{String(index + 1).padStart(2, "0")}</span><span className="trace-route"><strong>{aliasFor(tx.source)} <ArrowUpRight size={14}/> {aliasFor(tx.target)}</strong><small>{tx.evidenceId || "Evidence source not supplied"} · {tx.time || "Timestamp not supplied"}</small></span><span className="trace-amount"><strong>{tx.amount || "Amount not supplied"}</strong><small>{tx.hash ? `Hash ${shortAddress(tx.hash)}` : "No transaction hash supplied"}</small></span><Badge tone={tx.status === "VERIFIED" ? "green" : "amber"}>{tx.status || "UNVERIFIED"}</Badge><ChevronDown className="trace-row-chevron" size={17}/></button>)}</div> : <EmptyState icon={GitBranch} title="No transfer claims to trace" text="Add transaction records or import a dossier with a transactions array. TRACE will not invent edges from chat text alone." action={<button className="btn btn-primary" onClick={() => setShowIntake(true)}><Plus size={15}/> Add evidence</button>}/>}</div>}
   </>;
 
-  const renderEvidence = () => <><SectionHeader eyebrow="SOURCE MANAGEMENT" title="Evidence vault" description="Ingest, preserve, and review source material. Extracted fields remain linked to the evidence item they came from." actions={<button className="btn btn-primary" onClick={()=>setShowIntake(true)}><Upload size={15}/> Ingest evidence</button>}/>
-    <div className="toolbar"><div className="search-box"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search evidence filename or content…"/></div><span className="toolbar-count">{visibleEvidence.length} items</span></div>
-    <div className="panel"><div className="panel-head"><div><div className="eyebrow">SOURCE REGISTER</div><h2>Evidence records</h2></div><Badge tone="cyan">LOCAL CASE STORE</Badge></div>{visibleEvidence.length ? <div className="evidence-table">{visibleEvidence.map(item=><div className="evidence-row evidence-row-tall" key={item.id}><div className="file-type"><FileText size={18}/></div><div className="evidence-name"><strong>{item.name}</strong><small>{item.id} · Added {new Date(item.addedAt).toLocaleString()} · {item.size || 0} bytes</small><p>{item.content.slice(0,190).replace(/\s+/g," ")}{item.content.length>190?"…":""}</p><small>{parseTransactions(item.content,item.id).length} transfer claim(s) parsed</small></div><Badge tone="amber">{item.status || "In review"}</Badge><button className="icon-btn danger-hover" title="Remove evidence" onClick={()=>{if(confirm(`Remove ${item.name} from this local case?`)){setEvidence(prev=>prev.filter(e=>e.id!==item.id));setToast("Evidence removed from local case.");}}}><Trash2 size={15}/></button></div>)}</div> : <EmptyState icon={FolderSearch} title="No matching evidence" text="Upload a text, CSV, JSON, or log file, or paste a source excerpt to add the first record." action={<button className="btn btn-primary" onClick={()=>setShowIntake(true)}><Plus size={15}/> Add evidence</button>}/>}</div>
-    <div className="notice wide"><LockKeyhole size={16}/><p><strong>Evidence handling note:</strong> this prototype stores records in browser local storage. It does not provide immutable chain of custody, server-side access controls, or a forensic-grade audit log. Preserve originals separately.</p></div>
+  const renderOverview = () => <><SectionHeader eyebrow="CASE INTELLIGENCE / OVERVIEW" title="Investigation overview" description="A case-specific view of source evidence, transfer claims and outstanding verification tasks." actions={<><button className="btn" onClick={exportDossier}><FileJson size={15}/> Export dossier</button><button className="btn" onClick={exportReport}><Download size={15}/> Export report</button><button className="btn btn-primary" onClick={() => setShowIntake(true)}><Plus size={15}/> Add evidence</button></>}/>
+    <div className="case-banner"><div className="case-emblem"><Shield size={24}/></div><div className="case-banner-main"><div className="eyebrow">ACTIVE INVESTIGATION · {activeCase.caseId}</div><h2>{activeCase.caseName}</h2><p>{activeCase.summary || "No incident summary supplied."} · {activeCase.blockchain || "Network not specified"}</p></div><div className="case-banner-right"><Badge tone="amber">IN REVIEW</Badge><span>Updated {fmtDate(activeCase.updatedAt)}</span></div></div>
+    <div className="metrics-grid"><Metric label="Evidence items" value={evidence.length} sub="In this case vault" icon={Files} tone="cyan"/><Metric label="Wallet entities" value={addresses.length} sub="Unique addresses extracted" icon={Network} tone="violet"/><Metric label="Transfer claims" value={transactions.length} sub={`${transactions.filter(t => t.status === "VERIFIED").length} marked verified`} icon={GitBranch} tone="amber"/><Metric label="Open leads" value={openLeads.length} sub="Require corroboration" icon={SearchCheck} tone="red"/></div>
+    <div className="overview-grid"><div className="panel"><div className="panel-head"><div><div className="eyebrow">CASE ACTIVITY</div><h2>Recent investigation events</h2></div><button className="text-btn" onClick={() => setPage("Investigation Timeline")}>View full timeline <ArrowUpRight size={14}/></button></div>{renderTimeline(true, timeline.slice(-6).reverse())}</div>
+    <div className="panel"><div className="panel-head"><div><div className="eyebrow">PRIORITY REVIEW</div><h2>Outstanding leads</h2></div><Badge tone={openLeads.length ? "red" : "green"}>{openLeads.length} OPEN</Badge></div><div className="lead-list">{openLeads.length ? openLeads.slice(0, 5).map(lead => <div className="lead" key={lead.id}><div className="lead-icon red"><AlertTriangle size={17}/></div><div><strong>{lead.title}</strong><p>{lead.detail}</p><span>{lead.priority} PRIORITY · {lead.category}</span></div></div>) : <div className="empty-state"><CircleCheck size={26}/><h3>No generated leads</h3><p>No unverified transfer claims currently need review in this case.</p></div>}</div><div className="panel-footnote"><LockKeyhole size={14}/> Local workspace · live chain verification not connected</div></div></div>
+    <div className="panel"><div className="panel-head"><div><div className="eyebrow">EVIDENCE VAULT</div><h2>Recently added evidence</h2></div><button className="text-btn" onClick={() => setPage("Evidence Vault")}>Open vault <ArrowUpRight size={14}/></button></div>{evidence.length ? <div className="evidence-table">{evidence.slice(-5).reverse().map(item => <div className="evidence-row" key={item.id}><div className="file-type"><FileText size={18}/></div><div className="evidence-name"><strong>{item.name}</strong><small>{item.id} · {Math.max(1, Math.round((item.size || 0) / 1024))} KB · Added {new Date(item.addedAt).toLocaleString()}</small></div><Badge tone="cyan">{item.status || "In review"}</Badge><button className="icon-btn" onClick={() => setPage("Evidence Vault")}><ExternalLink size={15}/></button></div>)}</div> : <EmptyState icon={Files} title="No evidence ingested" text="Add victim reports, chat exports, transaction records, CSV files or a case dossier. The timeline will not fabricate events." action={<button className="btn btn-primary" onClick={() => setShowIntake(true)}><Upload size={15}/> Ingest evidence</button>}/>}</div>
   </>;
 
-  const renderTimelinePage = () => <><SectionHeader eyebrow="EVENT RECONSTRUCTION" title="Investigation timeline" description="Chronological reconstruction combining submitted transfer claims and case notes. Reported events are not treated as verified facts." actions={<button className="btn" onClick={exportReport}><Download size={15}/> Export timeline</button>}/><div className="timeline-toolbar"><div className="eyebrow">EVENT STREAM · {timeline.length} RECORDS</div><div className="filter-pill"><Filter size={14}/><select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}><option>All records</option><option>UNVERIFIED</option><option>REPORTED</option><option>RECORDED</option></select></div></div><div className="panel timeline-panel">{renderTimeline(false)}</div></>;
+  const renderInvestigations = () => <><SectionHeader eyebrow="CASE MANAGEMENT" title="Investigations" description="Create, switch, export and manage separate local case files." actions={<><button className="btn" onClick={() => setShowDossierImport(true)}><FileJson size={15}/> Import dossier</button><button className="btn btn-primary" onClick={() => setShowCreateCase(true)}><FolderPlus size={15}/> New investigation</button></>}/><div className="case-list">{cases.map(c => <div className={`panel investigation-card ${c.caseId === activeCase.caseId ? "current-case" : ""}`} key={c.caseId}><div className="case-emblem"><Shield size={26}/></div><div className="investigation-card-copy"><div className="eyebrow">{c.caseId} · {c.blockchain || "Network unspecified"}</div><h2>{c.caseName}</h2><p>{c.summary || "No incident summary supplied."}</p><div className="investigation-meta"><Badge tone={c.caseId === activeCase.caseId ? "green" : "slate"}>{c.caseId === activeCase.caseId ? "ACTIVE CASE" : "LOCAL CASE"}</Badge><span>{(c.evidence || []).length} evidence item(s)</span><span>{(c.importedTransactions || []).length + (c.evidence || []).reduce((n,e) => n + parseTransactions(e.content,e.id).length,0)} transfer claim(s)</span><span>Updated {fmtDate(c.updatedAt)}</span></div></div><div className="case-card-actions"><button className={`btn ${c.caseId === activeCase.caseId ? "btn-primary" : ""}`} onClick={() => { setActiveCaseId(c.caseId); setSelectedWallet(null); setSelectedTx(null); setSearch(""); setPage("Overview"); setToast(`Switched to ${c.caseName}.`); }}> {c.caseId === activeCase.caseId ? "Active case" : "Open case"} <ArrowUpRight size={14}/></button></div></div>)}</div><div className="notice wide"><Activity size={16}/><p>Cases are stored in this browser's local storage. Export each case dossier for backup. Multi-user access, server-side storage and immutable chain of custody are not configured.</p></div></>;
 
-  const renderReports = () => <><SectionHeader eyebrow="DOCUMENTATION" title="Reports & findings" description="Prepare an exportable case summary with source-linked claims, outstanding questions, and explicit limitations." actions={<button className="btn btn-primary" onClick={exportReport}><Download size={15}/> Export JSON report</button>}/><div className="report-tabs">{["Executive summary","Transfer claims","Evidence register","Limitations"].map(t=><button className={reportTab===t?"active":""} onClick={()=>setReportTab(t)} key={t}>{t}</button>)}</div><div className="panel report-preview"><div className="report-document-head"><div className="report-logo"><Shield size={21}/><span>TRACEPOINT <b>FORENSICS</b></span></div><Badge tone="amber">HUMAN REVIEW REQUIRED</Badge></div><div className="eyebrow">{caseId} · INVESTIGATION REPORT</div><h2>{caseName}</h2>
-    {reportTab==="Executive summary" && <><p className="report-lead">This report summarizes material currently present in the local investigation workspace. It distinguishes submitted claims from independently verified findings.</p><div className="report-facts"><div><span>Evidence items</span><strong>{evidence.length}</strong></div><div><span>Wallet entities</span><strong>{addresses.length}</strong></div><div><span>Transfer claims</span><strong>{transactions.length}</strong></div></div><h3>Current assessment</h3><p>The supplied material may describe a sequence of transfers, but the local application has not independently confirmed transaction hashes, wallet ownership, asset movement, or intent.</p></>}
-    {reportTab==="Transfer claims" && <><h3>Parsed transfer claims</h3>{transactions.length?transactions.map(tx=><div className="report-transfer" key={tx.id}><strong>{tx.amount}</strong><p>{aliasFor(tx.source,addresses)} → {aliasFor(tx.target,addresses)}</p><small>{tx.evidenceId} · {tx.time||"Timestamp not supplied"} · {shortAddress(tx.hash)||"No hash supplied"}</small><Badge tone="amber">UNVERIFIED</Badge></div>):<p>No transfer claims have been parsed from the current evidence.</p>}</>}
-    {reportTab==="Evidence register" && <>{evidence.length?evidence.map(e=><div className="report-transfer" key={e.id}><strong>{e.id} · {e.name}</strong><p>{parseTransactions(e.content,e.id).length} transfer claim(s) parsed from this source.</p><small>Added {new Date(e.addedAt).toLocaleString()} · {e.size||0} bytes</small></div>):<p>No evidence items are currently registered.</p>}</>}
-    {reportTab==="Limitations" && <><h3>Unresolved questions</h3><ul className="report-list"><li>Verify each transaction hash on the correct network.</li><li>Confirm sender, recipient, asset, value, and timestamp independently.</li><li>Establish wallet attribution using independent evidence.</li><li>Preserve original files and document acquisition provenance.</li><li>Do not treat graph links or extracted text as proof of fraud.</li></ul></>}
-    <div className="report-footer"><LockKeyhole size={14}/> Generated locally · {new Date().toLocaleString()} · Not a legal finding</div></div></>;
+  const renderEvidence = () => <><SectionHeader eyebrow="SOURCE MANAGEMENT" title="Evidence vault" description="Ingest, preserve and search source material. Each extracted transfer claim retains a reference to the evidence item it came from." actions={<><button className="btn" onClick={exportDossier}><Download size={15}/> Export dossier</button><button className="btn btn-primary" onClick={() => setShowIntake(true)}><Upload size={15}/> Ingest evidence</button></>}/><div className="toolbar"><div className="search-box"><Search size={16}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search evidence filename or content…"/></div><span className="toolbar-count">{visibleEvidence.length} of {evidence.length} items</span></div>
+    <div className="panel"><div className="panel-head"><div><div className="eyebrow">SOURCE REGISTER · {activeCase.caseId}</div><h2>Evidence records</h2></div><Badge tone="cyan">LOCAL CASE STORE</Badge></div>{visibleEvidence.length ? <div className="evidence-table">{visibleEvidence.map(item => <div className="evidence-row evidence-row-tall" key={item.id}><div className="file-type"><FileText size={18}/></div><div className="evidence-name"><strong>{item.name}</strong><small>{item.id} · {item.type || "Source document"} · Added {new Date(item.addedAt).toLocaleString()} · {item.size || 0} bytes</small><p>{String(item.content || "").slice(0, 260).replace(/\s+/g, " ")}{String(item.content || "").length > 260 ? "…" : ""}</p><small>{parseTransactions(item.content, item.id).length} transfer claim(s) parsed · {extractWallets(item.content).length} wallet address(es) · {extractHashes(item.content).length} transaction hash(es)</small></div><Badge tone="amber">{item.status || "In review"}</Badge><button className="icon-btn danger-hover" title="Remove evidence" onClick={() => removeEvidence(item)}><Trash2 size={15}/></button></div>)}</div> : <EmptyState icon={FolderSearch} title="No matching evidence" text="Search returned no records, or this case has no evidence yet. Ingest several source files at once." action={<button className="btn btn-primary" onClick={() => setShowIntake(true)}><Plus size={15}/> Add evidence</button>}/>}</div>
+    <div className="notice wide"><LockKeyhole size={16}/><p><strong>Evidence handling:</strong> records are stored in browser local storage and can be edited by the local user. This is not an immutable forensic chain-of-custody system. Preserve originals separately and document acquisition.</p></div></>;
 
-  const renderInvestigations = () => <><SectionHeader eyebrow="CASE MANAGEMENT" title="Investigations" description="Manage active cases and review the current investigation scope." actions={<button className="btn btn-primary" onClick={()=>{setCaseName(prompt("Investigation title",caseName)||caseName);setCaseId(prompt("Case ID",caseId)||caseId);setToast("Investigation details updated.");}}><Plus size={15}/> Edit case details</button>}/><div className="panel investigation-card"><div className="case-emblem"><Shield size={26}/></div><div className="investigation-card-copy"><div className="eyebrow">{caseId}</div><h2>{caseName}</h2><p>Suspected investment fraud · Financial transaction analysis</p><div className="investigation-meta"><Badge tone="amber">IN REVIEW</Badge><span>Created 10 Oct 2026</span><span>Lead investigator: Current user</span></div></div><button className="btn" onClick={()=>setPage("Overview")}>Open case <ArrowUpRight size={15}/></button></div><div className="notice wide"><Activity size={16}/><p>This prototype currently contains one active local investigation. Multi-user case assignment and server-backed case management are not configured.</p></div></>;
+  const renderTimelinePage = () => <><SectionHeader eyebrow="EVENT RECONSTRUCTION" title="Investigation timeline" description="A source-linked incident log combining imported events and transfer claims. Dates are displayed as supplied; missing timestamps are never guessed." actions={<button className="btn" onClick={() => downloadBlob(`${safeFileName(activeCase.caseId)}-timeline.json`, JSON.stringify(visibleTimeline, null, 2))}><Download size={15}/> Export filtered timeline</button>}/>
+    <div className="timeline-summary-grid"><div><span>TOTAL EVENTS</span><strong>{timeline.length}</strong><small>Imported events + transfer claims</small></div><div><span>TRANSFER CLAIMS</span><strong>{timeline.filter(event => event.type === "transaction").length}</strong><small>Linked to transaction records</small></div><div><span>VERIFIED LABELS</span><strong>{timeline.filter(event => event.status === "VERIFIED").length}</strong><small>As marked by source records</small></div><div><span>UNVERIFIED / REPORTED</span><strong>{timeline.filter(event => ["UNVERIFIED", "REPORTED"].includes(event.status)).length}</strong><small>Require corroboration</small></div></div>
+    <div className="timeline-toolbar"><div><div className="eyebrow">CASE EVENT STREAM</div><strong>{visibleTimeline.length} of {timeline.length} records shown</strong></div><div className="filter-pill"><Filter size={16}/><label htmlFor="timeline-status-filter">Status</label><select id="timeline-status-filter" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}><option>All records</option><option>UNVERIFIED</option><option>VERIFIED</option><option>REPORTED</option><option>RECORDED</option></select></div></div><div className="panel timeline-panel"><div className="timeline-guidance"><Clock3 size={17}/><span><strong>Reading this timeline:</strong> transaction rows are transfer claims extracted from evidence; proximity in time does not prove the chat or event caused a transfer.</span></div>{renderTimeline(false, visibleTimeline)}</div></>;
 
-  const renderSettings = () => <><SectionHeader eyebrow="WORKSPACE CONFIGURATION" title="Settings" description="Review local workspace configuration and evidence-handling limitations."/><div className="settings-grid"><div className="panel settings-panel"><div className="panel-head"><div><div className="eyebrow">CASE CONFIGURATION</div><h2>Investigation identity</h2></div><Settings size={18}/></div><label>Investigation title<input value={caseName} onChange={e=>setCaseName(e.target.value)}/></label><label>Case ID<input value={caseId} onChange={e=>setCaseId(e.target.value)}/></label><p className="muted">Changes are stored in this browser's local storage.</p></div><div className="panel settings-panel"><div className="panel-head"><div><div className="eyebrow">DATA & SECURITY</div><h2>Workspace status</h2></div><LockKeyhole size={18}/></div><div className="setting-row"><span>Storage mode</span><Badge tone="cyan">LOCAL BROWSER</Badge></div><div className="setting-row"><span>Live blockchain RPC</span><Badge tone="amber">NOT CONNECTED</Badge></div><div className="setting-row"><span>Immutable audit log</span><Badge tone="red">NOT AVAILABLE</Badge></div><button className="btn btn-danger" onClick={()=>{if(confirm("Delete all locally stored evidence and timeline entries for this app? This cannot be undone.")){setEvidence([]);setManualTimeline([]);localStorage.removeItem(STORAGE_KEY);setToast("Local case records cleared.");}}}><Trash2 size={15}/> Clear local case records</button></div></div></>;
+  const renderReports = () => <><SectionHeader eyebrow="DOCUMENTATION" title="Reports & findings" description="Prepare a source-linked case summary, transfer register, evidence register, limitations and a reviewable asset-preservation request." actions={<><button className="btn" onClick={exportFreezeDraft}><FileWarning size={15}/> Draft freeze request</button><button className="btn" onClick={exportDossier}><FileJson size={15}/> Export dossier</button><button className="btn btn-primary" onClick={exportReport}><Download size={15}/> Export report</button></>}/><div className="report-tabs">{["Executive summary", "Transfer claims", "Evidence register", "Incident timeline", "Open leads", "Limitations"].map(t => <button className={reportTab === t ? "active" : ""} onClick={() => setReportTab(t)} key={t}>{t}</button>)}</div><div className="panel report-preview"><div className="report-document-head"><div className="report-logo"><Shield size={21}/><span>TRACEPOINT <b>FORENSICS</b></span></div><Badge tone="amber">HUMAN REVIEW REQUIRED</Badge></div><div className="eyebrow">{activeCase.caseId} · INVESTIGATION REPORT</div><h2>{activeCase.caseName}</h2><p className="report-lead">{activeCase.summary || "No incident summary supplied."} Network: {activeCase.blockchain || "Not specified"}. This report distinguishes submitted claims from independently verified findings.</p>
+    {reportTab === "Executive summary" && <><div className="report-facts"><div><span>Evidence items</span><strong>{evidence.length}</strong></div><div><span>Wallet entities</span><strong>{addresses.length}</strong></div><div><span>Transfer claims</span><strong>{transactions.length}</strong></div></div><h3>Current assessment</h3><p>The workspace contains {evidence.length} evidence item(s), {addresses.length} wallet address(es), and {transactions.length} transfer claim(s). {transactions.filter(t => t.status === "VERIFIED").length} claim(s) are marked verified in the imported records. The application has not independently verified blockchain state or wallet ownership.</p>{activeCase.reportedLoss && <p><strong>Reported loss:</strong> {activeCase.reportedLoss}. This is a reported figure, not an independently confirmed loss amount.</p>}<h3>Next investigative steps</h3><ul className="report-list"><li>Verify each transaction hash on the correct network.</li><li>Corroborate payment demands against original chat exports and timestamps.</li><li>Establish wallet attribution only from independent evidence.</li><li>Preserve originals and document acquisition provenance.</li></ul></>}
+    {reportTab === "Transfer claims" && <>{transactions.length ? transactions.map(tx => <div className="report-transfer" key={tx.id}><strong>{tx.amount}</strong><p>{aliasFor(tx.source)} · {tx.source} → {aliasFor(tx.target)} · {tx.target}</p><small>{tx.evidenceId} · {tx.time || "Timestamp not supplied"} · {tx.hash || "No transaction hash supplied"}</small><Badge tone={tx.status === "VERIFIED" ? "green" : "amber"}>{tx.status || "UNVERIFIED"}</Badge></div>) : <p>No transfer claims have been extracted. Add structured transaction evidence or import a case dossier.</p>}</>}
+    {reportTab === "Evidence register" && <>{evidence.length ? evidence.map(item => <div className="report-transfer" key={item.id}><strong>{item.id} · {item.name}</strong><p>{item.type || "Source document"} · {parseTransactions(item.content,item.id).length} transfer claim(s) parsed · {extractWallets(item.content).length} wallet address(es)</p><small>Added {new Date(item.addedAt).toLocaleString()} · {item.size || 0} bytes</small></div>) : <p>No evidence records are registered for this case.</p>}</>}
+    {reportTab === "Incident timeline" && renderTimeline(false, timeline)}
+    {reportTab === "Open leads" && (openLeads.length ? openLeads.map(lead => <div className="report-transfer" key={lead.id}><strong>{lead.title}</strong><p>{lead.detail}</p><small>{lead.priority} PRIORITY · {lead.category}</small></div>) : <p>No automatically generated leads require review.</p>)}
+    {reportTab === "Limitations" && <><h3>Limitations and unresolved questions</h3><ul className="report-list"><li>Records are parsed from locally submitted material and are not automatically verified on-chain.</li><li>Verify transaction hashes, network, asset, amount and timestamp independently.</li><li>Wallet aliases are display labels only and do not establish identity or ownership.</li><li>Temporal proximity between a chat and a transaction is a lead, not proof of causation.</li><li>Any freeze or preservation request must be reviewed by an authorised investigator and appropriate legal authority.</li><li>Browser local storage does not provide immutable chain of custody or server-side access controls.</li></ul></>}
+    <div className="report-footer"><LockKeyhole size={14}/> Generated locally · {new Date().toLocaleString()} · Not a legal finding · Human review required</div></div></>;
+
+  const renderSettings = () => <><SectionHeader eyebrow="WORKSPACE CONFIGURATION" title="Settings" description="Review this local workspace, export case records and understand storage limitations."/><div className="settings-grid"><div className="panel settings-panel"><div className="panel-head"><div><div className="eyebrow">CASE CONFIGURATION</div><h2>Active investigation</h2></div><Settings size={18}/></div><label>Investigation title<input value={activeCase.caseName} onChange={e => updateActiveCase(c => ({ ...c, caseName: e.target.value }))}/></label><label>Case ID<input value={activeCase.caseId} readOnly/></label><label>Blockchain / network<input value={activeCase.blockchain || ""} onChange={e => updateActiveCase(c => ({ ...c, blockchain: e.target.value }))}/></label><label>Reported loss<input value={activeCase.reportedLoss || ""} onChange={e => updateActiveCase(c => ({ ...c, reportedLoss: e.target.value }))} placeholder="e.g. 2.4 ETH (reported, not verified)"/></label><label>Incident summary<textarea rows={3} value={activeCase.summary || ""} onChange={e => updateActiveCase(c => ({ ...c, summary: e.target.value }))}/></label><button className="btn btn-primary" onClick={exportDossier}><Save size={15}/> Export case backup</button></div><div className="panel settings-panel"><div className="panel-head"><div><div className="eyebrow">DATA & SECURITY</div><h2>Workspace status</h2></div><LockKeyhole size={18}/></div><div className="setting-row"><span>Storage mode</span><Badge tone="cyan">LOCAL BROWSER</Badge></div><div className="setting-row"><span>Active case count</span><strong>{cases.length}</strong></div><div className="setting-row"><span>Live blockchain RPC</span><Badge tone="amber">NOT CONNECTED</Badge></div><div className="setting-row"><span>Immutable audit log</span><Badge tone="red">NOT AVAILABLE</Badge></div><div className="setting-row"><span>Active case evidence</span><strong>{evidence.length}</strong></div><button className="btn" onClick={exportReport}><Download size={15}/> Export investigation report</button><button className="btn btn-danger" onClick={removeCase}><Trash2 size={15}/> Delete active investigation</button><button className="btn btn-danger" onClick={() => { if (window.confirm("Delete every local TRACE case and all associated evidence from this browser? Export backups first. This cannot be undone.")) { localStorage.removeItem(STORAGE_KEY); const initial = blankCase("Operation Glass River", "TPF-2026-014"); setCases([initial]); setActiveCaseId(initial.caseId); setSelectedWallet(null); setSelectedTx(null); setToast("All local TRACE cases were cleared."); } }}><Trash2 size={15}/> Clear all local cases</button></div></div></>;
 
   return <div className="app-shell">
-    <aside className={`sidebar ${collapsed?"sidebar-collapsed":""}`}><div className="brand"><div className="brand-mark"><Shield size={23}/><span/></div>{!collapsed&&<div className="brand-word"><strong>TRACEPOINT</strong><small>FORENSICS PLATFORM</small></div>}<button className="collapse-btn" onClick={()=>setCollapsed(!collapsed)} title="Collapse navigation"><MoreHorizontal size={18}/></button></div>
-      {!collapsed&&<div className="workspace-label">INVESTIGATION WORKSPACE</div>}
-      <nav className="nav-list">{Object.entries(iconMap).map(([label,Icon])=><button key={label} className={`nav-item ${page===label?"active":""}`} onClick={()=>setPage(label)} title={collapsed?label:undefined}><Icon size={18}/>{!collapsed&&<span>{label}</span>}{!collapsed&&label==="Evidence Vault"&&evidence.length>0&&<small>{evidence.length}</small>}</button>)}</nav>
-      {!collapsed&&<div className="sidebar-case"><div className="sidebar-case-top"><span className="live-dot"/> ACTIVE CASE</div><strong>{caseName}</strong><small>{caseId}</small><div className="sidebar-case-bottom"><Badge tone="amber">IN REVIEW</Badge><span>Priority: High</span></div></div>}
-      {!collapsed&&<div className="sidebar-footer"><div className="avatar">DF</div><div><strong>Investigator</strong><small>Local workspace</small></div><Settings size={15}/></div>}
-    </aside>
-    <main className="main-shell"><header className="topbar"><div className="breadcrumbs"><span>CASES</span><span className="crumb-slash">/</span><strong>{page.toUpperCase()}</strong></div><div className="topbar-right"><div className="global-search"><Search size={15}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search this case…"/><kbd>⌘ K</kbd></div><div className="case-selector-wrap"><button className="case-selector" onClick={()=>setShowCaseMenu(!showCaseMenu)}><span className="case-selector-dot"/><span>{caseId}</span><ChevronDown size={14}/></button>{showCaseMenu&&<div className="dropdown"><strong>{caseName}</strong><small>{caseId} · Active investigation</small><button onClick={()=>{setShowCaseMenu(false);setPage("Investigations");}}>View case details</button></div>}</div><button className="icon-btn notification-btn" onClick={()=>setShowNotifications(!showNotifications)}><Bell size={17}/><i/></button>{showNotifications&&<div className="notification-pop"><strong>Case notifications</strong><p><AlertTriangle size={14}/> {transactions.length} transfer claims require independent verification.</p><p><Files size={14}/> {evidence.length} evidence item(s) in local vault.</p></div>}<div className="profile"><div className="avatar">DF</div><div><strong>Investigator</strong><small>Analyst profile</small></div></div></div></header>
-      <div className="workspace"><div className="workspace-notice"><div><span className="notice-pulse"/> LOCAL ANALYSIS MODE</div><span>Submitted records are not independently verified · {caseId}</span><button onClick={()=>setPage("Settings")}>Workspace status <ArrowUpRight size={13}/></button></div>
-        {page==="Overview"&&renderOverview()}
-        {page==="Investigations"&&renderInvestigations()}
-        {page==="Evidence Vault"&&renderEvidence()}
-        {page==="Entity Network"&&renderNetwork()}
-        {page==="Fund Tracing"&&renderNetwork()}
-        {page==="Investigation Timeline"&&renderTimelinePage()}
-        {page==="Reports"&&renderReports()}
-        {page==="Settings"&&renderSettings()}
+    <aside className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}><div className="brand"><div className="brand-mark"><Shield size={23}/><span/></div>{!collapsed && <div className="brand-word"><strong>TRACE</strong><small>FORENSICS WORKSPACE</small></div>}<button className="collapse-btn" onClick={() => setCollapsed(!collapsed)} title="Collapse navigation"><MoreHorizontal size={18}/></button></div>{!collapsed && <div className="workspace-label">INVESTIGATION WORKSPACE</div>}<nav className="nav-list">{Object.entries(iconMap).map(([label, Icon]) => <button key={label} className={`nav-item ${page === label ? "active" : ""}`} onClick={() => setPage(label)} title={collapsed ? label : undefined}><Icon size={18}/>{!collapsed && <span>{label}</span>}{!collapsed && label === "Evidence Vault" && evidence.length > 0 && <small>{evidence.length}</small>}</button>)}</nav>
+      {!collapsed && <div className="sidebar-case"><div className="sidebar-case-top"><span className="live-dot"/> ACTIVE CASE</div><strong>{activeCase.caseName}</strong><small>{activeCase.caseId}</small><div className="sidebar-case-bottom"><Badge tone="amber">IN REVIEW</Badge><span>{cases.length} case(s)</span></div></div>}{!collapsed && <div className="sidebar-footer"><div className="avatar">DF</div><div><strong>Investigator</strong><small>Local workspace</small></div><button className="icon-btn" onClick={() => setPage("Settings")} title="Settings"><Settings size={15}/></button></div>}</aside>
+    <main className="main-shell"><header className="topbar"><div className="breadcrumbs"><span>CASES</span><span className="crumb-slash">/</span><strong>{page.toUpperCase()}</strong></div><div className="topbar-right"><div className="global-search"><Search size={15}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search this case…"/><kbd>LOCAL</kbd></div><div className="case-selector-wrap"><button className="case-selector" onClick={() => setShowCaseMenu(!showCaseMenu)}><span className="case-selector-dot"/><span>{activeCase.caseId}</span><ChevronDown size={14}/></button>{showCaseMenu && <div className="dropdown case-dropdown"><strong>Switch investigation</strong><small>{cases.length} local case(s) available</small>{cases.map(c => <button className={c.caseId === activeCase.caseId ? "selected-case-option" : ""} key={c.caseId} onClick={() => { setActiveCaseId(c.caseId); setShowCaseMenu(false); setSelectedWallet(null); setSelectedTx(null); setSearch(""); setToast(`Switched to ${c.caseName}.`); }}><span>{c.caseName}</span><small>{c.caseId}</small></button>)}<button onClick={() => { setShowCaseMenu(false); setShowCreateCase(true); }}><Plus size={13}/> Create new investigation</button></div>}</div><button className="icon-btn notification-btn" onClick={() => setShowNotifications(!showNotifications)} title="Notifications"><Bell size={17}/><i/></button>{showNotifications && <div className="notification-pop"><strong>Case review summary</strong><p><AlertTriangle size={14}/> {transactions.filter(t => t.status !== "VERIFIED").length} transfer claim(s) need verification.</p><p><Files size={14}/> {evidence.length} evidence item(s) in this case.</p><p><FolderSearch size={14}/> {cases.length} investigation(s) stored locally.</p></div>}<div className="profile"><div className="avatar">DF</div><div><strong>Investigator</strong><small>Analyst profile</small></div></div></div></header>
+      <div className="workspace"><div className="workspace-notice"><div><span className="notice-pulse"/> LOCAL ANALYSIS MODE</div><span>Submitted records are not independently verified · {activeCase.caseId}</span><button onClick={() => setPage("Settings")}>Workspace status <ArrowUpRight size={13}/></button></div>
+        {page === "Overview" && renderOverview()}{page === "Investigations" && renderInvestigations()}{page === "Evidence Vault" && renderEvidence()}{page === "Entity Network" && renderNetwork()}{page === "Fund Tracing" && renderNetwork()}{page === "Investigation Timeline" && renderTimelinePage()}{page === "Reports" && renderReports()}{page === "Settings" && renderSettings()}
       </div>
     </main>
-    {showIntake&&<div className="modal-backdrop" onClick={()=>setShowIntake(false)}><div className="modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">EVIDENCE INGESTION</div><h2>Add source material</h2><p>Keep source records linked to the claims extracted from them.</p></div><button className="icon-btn" onClick={()=>setShowIntake(false)}><X size={17}/></button></div><label className="field-label">Evidence label<input value={inputName} onChange={e=>setInputName(e.target.value)} placeholder="e.g. exchange_export_01.txt"/></label><label className="field-label">Paste source text<textarea rows={7} value={inputText} onChange={e=>setInputText(e.target.value)} placeholder={"From: 0x…\nTo: 0x…\nAmount: 0.50 ETH\nTransaction Hash: 0x…\nTimestamp: 2026-10-10 09:22:00 UTC"}/></label><div className="modal-or">OR UPLOAD A FILE</div><label className="dropzone"><Upload size={22}/><strong>Choose evidence files</strong><span>TXT, CSV, JSON, LOG or MD</span><input type="file" multiple accept=".txt,.csv,.json,.log,.md" onChange={e=>handleFiles(e.target.files)}/></label><div className="modal-actions"><button className="btn" onClick={()=>setShowIntake(false)}>Cancel</button><button className="btn btn-primary" onClick={()=>addEvidence(inputName,inputText)}><ScanSearch size={15}/> Ingest evidence</button></div><div className="modal-caveat"><AlertTriangle size={14}/> Parsed transfers are claims until independently verified.</div></div></div>}
-    {toast&&<div className="toast"><CircleCheck size={17}/>{toast}<button onClick={()=>setToast("")}><X size={14}/></button></div>}
+    {showCreateCase && <div className="modal-backdrop" onClick={() => setShowCreateCase(false)}><form className="modal" onSubmit={e => { e.preventDefault(); createCase(); }} onClick={e => e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">CASE MANAGEMENT</div><h2>Create investigation</h2><p>Every investigation receives its own evidence vault, transaction graph and timeline.</p></div><button type="button" className="icon-btn" onClick={() => setShowCreateCase(false)}><X size={17}/></button></div><label className="field-label">Investigation title<input required value={newCaseName} onChange={e => setNewCaseName(e.target.value)} placeholder="e.g. Operation Northstar" autoFocus/></label><label className="field-label">Incident summary<textarea rows={3} value={newCaseSummary} onChange={e => setNewCaseSummary(e.target.value)}/></label><div className="form-two-col"><label className="field-label">Blockchain / network<select value={newCaseChain} onChange={e => setNewCaseChain(e.target.value)}><option>Ethereum</option><option>Bitcoin</option><option>Polygon</option><option>BNB Smart Chain</option><option>Solana</option><option>Other / unknown</option></select></label><label className="field-label">Reported loss<input value={newCaseLoss} onChange={e => setNewCaseLoss(e.target.value)} placeholder="Reported amount, if known"/></label></div><div className="modal-actions"><button type="button" className="btn" onClick={() => setShowCreateCase(false)}>Cancel</button><button type="submit" className="btn btn-primary"><FolderPlus size={15}/> Create case</button></div><div className="modal-caveat"><AlertTriangle size={14}/> Reported losses and allegations are not verified findings.</div></form></div>}
+    {showDossierImport && <div className="modal-backdrop" onClick={() => setShowDossierImport(false)}><div className="modal" onClick={e => e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">CASE IMPORT</div><h2>Import detailed case dossier</h2><p>Import one JSON dossier containing case details, evidence, transactions and incident timeline events.</p></div><button className="icon-btn" onClick={() => setShowDossierImport(false)}><X size={17}/></button></div><label className="dropzone"><FileJson size={22}/><strong>Choose JSON dossier</strong><span>Creates a separate investigation and preserves its source records</span><input type="file" accept=".json,application/json" onChange={e => { const file = e.target.files?.[0]; if (file) importDossierFile(file); e.target.value = ""; }}/></label><div className="dossier-help"><strong>Expected structure</strong><pre>{`{
+  "case": { "caseId": "CASE-001", "caseName": "Example", "blockchain": "Ethereum" },
+  "evidence": [{ "id": "E-001", "name": "chat.txt", "content": "..." }],
+  "transactions": [{ "from": "0x...40 hex chars", "to": "0x...40 hex chars", "amount": "0.5", "asset": "ETH", "hash": "0x...64 hex chars", "time": "2026-10-10T09:22:00Z", "evidenceId": "E-001" }],
+  "timeline": [{ "date": "2026-10-10", "time": "09:22", "title": "Payment reported", "detail": "...", "source": "E-001" }]
+}`}</pre></div><div className="modal-actions"><button className="btn" onClick={() => setShowDossierImport(false)}>Close</button><button className="btn btn-primary" onClick={() => { setShowDossierImport(false); setShowIntake(true); }}>Import source files instead</button></div></div></div>}
+    {showIntake && <div className="modal-backdrop" onClick={() => setShowIntake(false)}><div className="modal" onClick={e => e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">EVIDENCE INGESTION · {activeCase.caseId}</div><h2>Add source material</h2><p>Batch-upload multiple records or paste one source excerpt. Evidence stays attached to the active case.</p></div><button className="icon-btn" onClick={() => setShowIntake(false)}><X size={17}/></button></div><label className="field-label">Evidence label<input value={inputName} onChange={e => setInputName(e.target.value)} placeholder="e.g. victim_statement_01.txt"/></label><label className="field-label">Evidence type<select value={inputType} onChange={e => setInputType(e.target.value)}><option>Victim report</option><option>Chat export</option><option>Transaction export</option><option>Exchange record</option><option>Screenshot OCR / transcript</option><option>Source document</option><option>Other</option></select></label><label className="field-label">Paste source text<textarea rows={6} value={inputText} onChange={e => setInputText(e.target.value)} placeholder={`From: 0x followed by 40 hex characters\nTo: 0x followed by 40 hex characters\nAmount: 0.50 ETH\nTransaction Hash: 0x followed by 64 hex characters\nTimestamp: 2026-10-10T09:22:00Z`}/></label><div className="modal-or">OR BATCH UPLOAD SOURCE FILES</div><label className="dropzone"><Upload size={22}/><strong>Choose multiple evidence files</strong><span>TXT, CSV, JSON, LOG, MD and text-readable exports</span><input type="file" multiple accept=".txt,.csv,.json,.log,.md,.xml,.html" onChange={e => { handleFiles(e.target.files); e.target.value = ""; }}/></label><div className="modal-actions"><button className="btn" onClick={() => setShowIntake(false)}>Cancel</button><button className="btn btn-primary" onClick={() => { const result = addEvidenceRecord(inputName, inputText, inputType); if (!result) { setToast("Paste source text or choose one or more files."); return; } setInputText(""); setInputName(""); setShowIntake(false); setToast(`${result.record.name} ingested · ${result.count} transfer claim(s) extracted.`); }}><ScanSearch size={15}/> Ingest pasted evidence</button></div><div className="modal-caveat"><AlertTriangle size={14}/> Files are parsed locally. No original is sent to a server or independently verified.</div></div></div>}
+    {toast && <div className="toast"><CircleCheck size={17}/><span>{toast}</span><button onClick={() => setToast("")}><X size={14}/></button></div>}
     <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
-      :root{font-family:Manrope,Inter,system-ui,sans-serif;color:#e8eff7;background:#080e16;font-synthesis:none;--bg:#080e16;--panel:#101925;--panel2:#131f2d;--line:#263748;--muted:#91a3b7;--cyan:#4cc9e8;--violet:#b88cff;--amber:#efb45c;--red:#f36f61;--green:#72d8b0}
+      @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+      :root{font-family:'Space Grotesk',Inter,system-ui,sans-serif;color:#e8eff7;background:#080e16;font-synthesis:none;--bg:#080e16;--panel:#101925;--panel2:#131f2d;--line:#263748;--muted:#91a3b7;--cyan:#4cc9e8;--violet:#b88cff;--amber:#efb45c;--red:#f36f61;--green:#72d8b0}
       *{box-sizing:border-box}body{margin:0;background:var(--bg)}button,input,textarea,select{font:inherit}button{cursor:pointer}
       .app-shell{min-height:100vh;background:radial-gradient(ellipse at 60% -15%,#142737 0%,#080e16 48%);display:flex;color:#e8eff7}
       .sidebar{width:252px;flex-shrink:0;border-right:1px solid #243444;background:rgba(9,16,25,.94);display:flex;flex-direction:column;padding:21px 14px 15px;min-height:100vh;position:sticky;top:0;height:100vh;transition:width .2s;z-index:4}.sidebar-collapsed{width:76px;padding-left:10px;padding-right:10px}
@@ -308,6 +416,124 @@ export default function App() {
       @media(max-width:1150px){.sidebar{width:215px}.network-layout{grid-template-columns:minmax(0,1fr) 300px}.metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.global-search{width:170px}.topbar{padding:0 20px}.workspace{padding:0 20px 35px}.profile{display:none}}
       @media(max-width:850px){.sidebar{width:68px;padding:18px 8px}.brand{padding:0 5px 20px}.brand-word,.collapse-btn,.workspace-label,.sidebar-case,.sidebar-footer,.nav-item span,.nav-item small{display:none}.nav-item{justify-content:center;padding:13px 0}.topbar{padding:0 14px}.global-search{display:none}.workspace{padding:0 14px 30px}.network-layout{grid-template-columns:1fr}.inspector{min-height:unset}.inspector .empty-state{min-height:200px}.overview-grid{grid-template-columns:1fr}.section-header{align-items:flex-start;flex-direction:column}.header-actions{width:100%}.case-banner-right{display:none}.network-canvas{height:500px}.workspace-notice>span{display:none}.settings-grid{grid-template-columns:1fr}}
       @media(max-width:560px){.metrics-grid{grid-template-columns:1fr 1fr;gap:8px}.metric{padding:12px 10px;gap:8px}.metric-icon{width:29px;height:29px}.metric-copy strong{font-size:22px}.metric-copy>span{font-size:9px}.topbar{height:58px}.breadcrumbs{font-size:8px}.case-selector{padding:8px;font-size:9px}.profile{display:none}.workspace-notice{font-size:8px}.section-header h1{font-size:23px}.case-banner{padding:14px;gap:11px}.case-emblem{width:39px;height:39px}.case-banner h2{font-size:16px}.panel-head{padding:14px}.network-canvas{height:440px}.network-legend .legend-note{margin-left:0;width:100%}.report-preview{padding:17px}.report-facts{grid-template-columns:1fr}.evidence-row{gap:8px}.evidence-row .badge{display:none}.notification-pop{right:0}.timeline-meta{align-items:flex-start;flex-direction:column}.sidebar{width:54px;padding:14px 5px}.brand-mark{width:34px;height:34px}.brand{padding:0 0 18px}.nav-item{font-size:10px}.modal{padding:17px}}
+      .case-list{display:flex;flex-direction:column;gap:12px}.investigation-card.current-case{border-color:#3b788a;box-shadow:inset 2px 0 #4cc9e8}.case-card-actions{display:flex;gap:7px;flex-wrap:wrap}.case-dropdown{width:285px;max-height:65vh;overflow:auto}.case-dropdown button{display:flex;flex-direction:column;gap:4px;margin-top:6px}.case-dropdown button span{font-size:10px}.case-dropdown button small{margin:0;color:#8ca1b5}.case-dropdown .selected-case-option{border-color:#4cc9e8;background:#163141}.form-two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}.field-label select{width:100%;border:1px solid #2c4153;border-radius:7px;background:#0a131d;color:#e7eff7;padding:11px;outline:0;font-size:11px}.field-label select:focus{border-color:#4cc9e8}.dossier-help{margin-top:17px;padding:12px;border:1px solid #2b4052;border-radius:7px;background:#0b141e}.dossier-help strong{font-size:10px}.dossier-help pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#9fb5c8;font:9px/1.7 'DM Mono',monospace;max-height:230px;overflow:auto}.timeline-open-tx{margin-top:8px;padding:0}.case-card-actions .btn{white-space:nowrap}
+      @media(max-width:650px){.form-two-col{grid-template-columns:1fr}.investigation-card{align-items:flex-start;flex-wrap:wrap}.case-card-actions{width:100%;padding-left:65px}.case-dropdown{right:-70px;width:min(285px,calc(100vw - 85px))}}
+      /* TRACE visual refinement: stronger typography, readable controls, and forensic graph labels. */
+      :root{font-family:'Space Grotesk',Inter,system-ui,sans-serif;font-size:14px;letter-spacing:.005em}
+      body,button,input,textarea,select{font-family:'Space Grotesk',Inter,system-ui,sans-serif}
+      code,kbd,.timeline-meta,.address-box code,.tx-detail code{font-family:'IBM Plex Mono',ui-monospace,monospace}
+      .section-header h1{font-size:clamp(28px,2.2vw,34px);letter-spacing:-1.1px}
+      .section-header p,.case-banner p,.panel-head p,.report-preview p{font-size:13px;line-height:1.75}
+      .eyebrow{font-size:10px;letter-spacing:1.8px}
+      .nav-item{font-size:13px;padding-top:14px;padding-bottom:14px}
+      .btn{font-size:12px;padding:11px 15px}
+      .global-search input,.case-selector,.breadcrumbs,.workspace-notice{font-size:11px}
+      .metric-copy>span{font-size:12px}.metric-copy strong{font-size:29px}.metric-copy small{font-size:10px}
+      .panel-head h2{font-size:16px}.panel-head{padding:19px 21px}
+      .timeline-content h3,.lead strong,.evidence-name strong{font-size:13px}
+      .timeline-content p,.lead p,.evidence-name p,.evidence-name small{font-size:11px;line-height:1.7}
+      .network-canvas{height:640px}
+      .network-canvas .react-flow__node{font-family:'Space Grotesk',Inter,sans-serif!important;letter-spacing:.02em}
+      .network-canvas .react-flow__edge-text{font-family:'IBM Plex Mono',monospace!important;font-size:12px!important;font-weight:600}
+      .network-canvas .react-flow__controls-button{width:36px;height:36px}
+      .network-legend{font-size:11px;padding:14px 19px}
+      .inspector-body{padding:18px}
+      .entity-stamp strong{font-size:13px}.entity-stamp small{font-size:11px}
+      .address-box{padding:14px;min-height:94px}.address-box label{font-size:9px;letter-spacing:1.3px}
+      .address-box .entity-readable-name{font-family:'Space Grotesk',Inter,sans-serif;font-size:18px;font-weight:700;line-height:1.4;overflow-wrap:anywhere;padding-right:24px;color:#e7f7ff}
+      .address-note{display:block;max-width:100%;padding-right:20px;margin-top:7px;color:#8ca4b8;font-size:10px;line-height:1.6}
+      .address-box .icon-btn:disabled{opacity:.25;cursor:not-allowed}
+      .inspector-stats span{font-size:10px}.inspector-stats strong{font-size:22px}
+      .subheading{font-size:12px}.tx-mini strong{font-size:12px}.tx-mini small{font-size:10px}
+      .report-preview h2{font-size:26px}.report-preview h3{font-size:14px}.report-list{font-size:12px;line-height:2}
+      .field-label{font-size:12px}.field-label input,.field-label textarea,.field-label select{font-size:13px}
+      .toast{font-size:12px}
+      @media(max-width:850px){.network-canvas{height:560px}}
+      @media(max-width:560px){.network-canvas{height:500px}.section-header h1{font-size:25px}.nav-item{font-size:11px}.metric-copy>span{font-size:10px}.panel-head h2{font-size:14px}}
+      /* TRACE typography reset: intentionally larger, cleaner, and easier to read. */
+      :root{font-family:'Manrope',Inter,system-ui,sans-serif;font-size:16px;letter-spacing:0}
+      body,button,input,textarea,select{font-family:'Manrope',Inter,system-ui,sans-serif}
+      body{font-size:16px}
+      .breadcrumbs,.breadcrumbs strong{font-size:12px}
+      .workspace-notice{font-size:12px;min-height:44px;height:auto;padding:8px 0;line-height:1.6}
+      .workspace-notice>div,.workspace-notice button{font-size:12px}
+      .eyebrow{font-size:11px;letter-spacing:1.5px}
+      .section-header h1{font-size:clamp(32px,2.5vw,38px);letter-spacing:-1.2px;line-height:1.18}
+      .section-header p,.case-banner p,.panel-head p,.report-preview p{font-size:14px;line-height:1.75}
+      .btn,.text-btn{font-size:13px}
+      .btn{padding:12px 16px}
+      .nav-item{font-size:14px;gap:12px}
+      .global-search input,.case-selector{font-size:13px}
+      .global-search kbd{font-size:11px}
+      .dropdown strong,.notification-pop strong{font-size:14px}
+      .dropdown small,.dropdown button,.notification-pop p{font-size:12px;line-height:1.6}
+      .case-banner h2{font-size:23px;line-height:1.3}
+      .case-banner p{font-size:13px}
+      .badge{font-size:10px;padding:6px 9px;letter-spacing:.4px}
+      .metric-copy>span{font-size:13px}
+      .metric-copy strong{font-size:32px}
+      .metric-copy small{font-size:11px;line-height:1.5}
+      .panel-head h2{font-size:17px}
+      .timeline-meta{font-size:11px}
+      .timeline-content h3,.lead strong,.evidence-name strong{font-size:14px;line-height:1.45}
+      .timeline-content p,.lead p,.evidence-name p,.evidence-name small{font-size:12px;line-height:1.75}
+      .timeline-content>small,.lead span{font-size:10px}
+      .empty-state h3{font-size:16px}
+      .empty-state p,.muted{font-size:13px;line-height:1.75}
+      .network-canvas{height:680px}
+      .network-canvas .react-flow__node{font-family:'Manrope',Inter,sans-serif!important;font-size:14px!important}
+      .network-canvas .react-flow__edge-text{font-family:'IBM Plex Mono',monospace!important;font-size:13px!important;font-weight:600}
+      .network-legend{font-size:12px;gap:20px}
+      .entity-stamp strong{font-size:15px}.entity-stamp small{font-size:12px;line-height:1.6}
+      .address-box label{font-size:10px}
+      .address-box .entity-readable-name{font-size:20px;line-height:1.5}
+      .address-note{font-size:12px;line-height:1.7}
+      .inspector-stats span{font-size:11px}.inspector-stats strong{font-size:24px}
+      .subheading{font-size:13px}
+      .tx-mini strong{font-size:13px}.tx-mini small{font-size:11px;line-height:1.5}
+      .tx-detail-head{font-size:12px}.tx-detail p{font-size:11px;line-height:1.6}.tx-detail p span{font-size:10px}.tx-detail code{font-size:11px}
+      .toolbar-count,.search-box input{font-size:12px}
+      .filter-pill,.filter-pill select{font-size:12px}
+      .report-tabs button{font-size:13px;padding:13px 16px}
+      .report-preview h2{font-size:29px}.report-preview h3{font-size:16px}
+      .report-list{font-size:13px;line-height:2}
+      .report-facts span{font-size:11px}.report-facts strong{font-size:28px}
+      .report-transfer strong{font-size:13px}.report-transfer small,.report-footer{font-size:11px}
+      .investigation-card h2{font-size:21px}.investigation-card p,.investigation-meta>span{font-size:12px}
+      .settings-panel>label,.setting-row{font-size:13px}
+      .modal-head h2{font-size:23px}.modal-head p{font-size:12px}
+      .field-label{font-size:13px}.field-label input,.field-label textarea,.field-label select{font-size:14px;padding:13px}
+      .dropzone strong{font-size:13px}.dropzone span,.modal-caveat{font-size:11px}
+      .toast{font-size:13px}
+      .case-dropdown button span{font-size:13px}.case-dropdown button small{font-size:11px}
+      .dossier-help strong{font-size:12px}.dossier-help pre{font-size:11px;line-height:1.8}
+      @media(max-width:850px){.network-canvas{height:590px}.section-header h1{font-size:32px}.nav-item{font-size:13px}}
+      @media(max-width:560px){body{font-size:15px}.section-header h1{font-size:29px}.nav-item{font-size:12px}.metric-copy>span{font-size:11px}.metric-copy strong{font-size:25px}.panel-head h2{font-size:15px}.network-canvas{height:520px}.case-banner h2{font-size:19px}.report-preview h2{font-size:24px}}
+
+      /* TRACE visual refresh: violet-plum surfaces, clear contrast, readable secondary text */
+      :root{font-family:'Plus Jakarta Sans','Manrope',Inter,system-ui,sans-serif;color:#f5f0ff;background:#100b1c;--bg:#100b1c;--panel:#191128;--panel2:#211638;--line:#40305b;--muted:#c0b4d8;--cyan:#d0b5ff;--violet:#b79aff;--amber:#f6cb83;--red:#ff9ab8;--green:#9de8c7}
+      body{background:#100b1c;color:#f5f0ff;font-size:15px}
+      .app-shell{background:radial-gradient(ellipse at 68% -12%,#56358a 0%,#24153e 32%,#100b1c 72%);color:#f5f0ff}
+      .sidebar{background:linear-gradient(180deg,rgba(28,18,47,.98),rgba(15,10,27,.98));border-color:#3b2b54}
+      .topbar{background:rgba(20,13,34,.94);border-color:#39284f}
+      .brand-mark,.case-emblem{background:linear-gradient(145deg,#6b46a5,#291b43);border-color:#9474c9;color:#f0dfff}
+      .nav-item{color:#c4b8dc;font-size:14px}.nav-item:hover{background:#30204a;color:#fff}.nav-item.active{background:linear-gradient(105deg,#593b83,#302044);border-color:#8c6bc0;color:#f0ddff;box-shadow:inset 3px 0 #d7b6ff}
+      .workspace-label,.eyebrow{color:#c0a7ef}.workspace-notice{color:#c3b6d9;border-color:#3a2a51;font-size:12px}.workspace-notice>div{color:#e0c9ff}.workspace-notice>span{border-color:#57416f}
+      .panel,.metric,.case-banner,.sidebar-case,.settings-panel,.report-facts div{background:linear-gradient(145deg,#211633,#171024);border-color:#403054}
+      .panel-head{border-color:#3b2b50}.panel-head h2{font-size:17px;color:#fff}.panel-head p{font-size:13px;color:#c0b3d7;line-height:1.75}
+      .section-header h1{font-size:36px;color:#fff;letter-spacing:-1.1px}.section-header p{font-size:15px;color:#c9bddf;line-height:1.75}
+      .eyebrow{font-size:11px;letter-spacing:1.8px}.btn{font-size:13px;padding:12px 15px;background:linear-gradient(135deg,#2b2040,#211630);border-color:#594372;color:#f0eaff}.btn:hover{background:linear-gradient(135deg,#453064,#2b1c43);border-color:#9d7ad0}.btn-primary{background:linear-gradient(120deg,#a78bfa,#d8b4fe);border-color:#d8b4fe;color:#1d1030;box-shadow:0 7px 24px #a78bfa25}.btn-primary:hover{background:linear-gradient(120deg,#c4b5fd,#f0d7ff);color:#1d1030}
+      .metric-copy>span{font-size:13px;color:#c8bce0}.metric-copy strong{font-size:31px;color:#fff}.metric-copy small{font-size:12px;color:#b7a9d1}.metric-icon.cyan{color:#e4d4ff;background:#382653}.metric-icon.violet{color:#e2c8ff;background:#3c2758}.metric-icon.amber{color:#ffdc9e;background:#49331f}.metric-icon.red{color:#ffb2ca;background:#48243c}
+      .case-banner{background:linear-gradient(115deg,#352253,#1d1430 65%,#40234f);border-color:#654783}.case-banner h2{font-size:24px;color:#fff}.case-banner p{font-size:13px;color:#d0c2e6;line-height:1.7}.badge{font-size:10px;letter-spacing:.6px}.badge-cyan{color:#eadbff;border-color:#76549d;background:#35244d}.badge-amber{color:#ffdda0;border-color:#86653a;background:#3a2a20}.badge-red{color:#ffb6cd;border-color:#8a4667;background:#3f2036}.badge-green{color:#b5f2d8;border-color:#3c8468;background:#193b32}.badge-slate{color:#d1c5e4;border-color:#58466e;background:#2b203b}
+      .global-search,.case-selector,.search-box,.filter-pill select,.field-label input,.field-label textarea,.field-label select,.settings-panel input{background:#171025;border-color:#4a365f;color:#f6f0ff}.global-search input,.search-box input{color:#f6f0ff;font-size:14px}.global-search input::placeholder,.search-box input::placeholder{color:#a99abe}.case-selector{font-size:12px}.avatar{background:linear-gradient(135deg,#8b5fc6,#392454);border-color:#b794e5;color:#fff}
+      .network-canvas{height:720px;background:radial-gradient(ellipse at center,#291b40 0%,#171024 65%,#120c1e 100%)}.network-canvas .react-flow__background{background:#171024}.network-canvas .react-flow__controls-button{background:#302044;fill:#f1e7ff;border-color:#5b4374}.network-canvas .react-flow__controls-button:hover{background:#50336e}.network-canvas .react-flow__minimap{background:#201531;border-color:#57416f}.network-canvas .react-flow__edge-text{font-family:'IBM Plex Mono',monospace!important;font-size:13px!important;font-weight:700}.network-legend{background:#1a1128;border-color:#443157;color:#d1c5e4;font-size:13px;padding:16px 20px}.legend-source{background:#a78bfa}.legend-middle{background:#c4b5fd}.legend-end{background:#f0abfc}.network-legend .legend-note{color:#c0b1d7;font-size:12px}
+      .inspector{background:linear-gradient(180deg,#211633,#171024)}.entity-stamp{background:linear-gradient(120deg,#382653,#241834);border-color:#62457f;color:#e0c7ff}.entity-stamp strong{font-size:16px;color:#fff}.entity-stamp small{font-size:13px;color:#c9b8e2;line-height:1.6}.address-box{background:#130d20;border-color:#4a365f}.address-box label{font-size:11px;color:#b5a4d0}.address-box .entity-readable-name{font-size:23px;color:#f0ddff}.address-note{font-size:13px;color:#c7b9de;line-height:1.7}.inspector-stats>div{background:#241834;border-color:#4b365f}.inspector-stats span{font-size:12px;color:#c6b8dd}.inspector-stats strong{font-size:27px;color:#fff}.subheading{font-size:15px;color:#f1e7ff}.tx-mini{background:linear-gradient(120deg,#2a1c3e,#21152f);border-color:#4b365f;color:#dfc8ff;padding:13px 11px}.tx-mini strong{font-size:14px;color:#fff}.tx-mini small{font-size:12px;color:#c2b3da;line-height:1.6}.muted{font-size:13px;color:#c1b4d7;line-height:1.8}.tx-detail{background:#140e21;border-color:#63477f}.tx-detail-head{font-size:14px;color:#fff}.tx-detail p{font-size:13px;color:#e2d8f1;line-height:1.8}.tx-detail p span{font-size:11px;color:#b9a7d4}.tx-detail code{font-size:12px;color:#eadcff}.notice{background:#33251c;border-color:#7a5a38;color:#ffdc9e}.notice p{font-size:12px;color:#f2d6a4;line-height:1.8}
+      .analysis-intro{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;padding:23px;margin-bottom:16px;background:linear-gradient(120deg,#382454,#211633 60%,#3b234e);border-color:#684a87}.analysis-intro-copy h2{font-size:24px;letter-spacing:-.5px;margin:0;color:#fff}.analysis-intro-copy p{font-size:14px;line-height:1.8;color:#ded0f1;max-width:900px;margin:9px 0 0}.analysis-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.analysis-kpis>div,.timeline-summary-grid>div{border:1px solid #63467e;background:linear-gradient(145deg,#2a1c40,#21152f);border-radius:9px;padding:14px;min-width:0}.analysis-kpis span,.timeline-summary-grid span{display:block;font-size:10px;letter-spacing:1px;color:#c6b1e8;font-weight:800}.analysis-kpis strong,.timeline-summary-grid strong{display:block;font-size:28px;color:#fff;margin-top:7px}.analysis-kpis small,.timeline-summary-grid small{display:block;font-size:12px;color:#c6b8dd;line-height:1.6;margin-top:4px}.transfer-ledger-panel{margin-top:16px}.trace-ledger{padding:0 18px}.trace-ledger-row{display:grid;grid-template-columns:42px minmax(0,1fr) minmax(150px,.7fr) auto 18px;gap:14px;align-items:center;width:100%;padding:16px 4px;border:0;border-bottom:1px solid #3b2b50;background:transparent;text-align:left;color:#f4edff}.trace-ledger-row:last-child{border-bottom:0}.trace-ledger-row:hover,.trace-ledger-row.selected{background:linear-gradient(90deg,#39255266,#25173866)}.trace-step{width:34px;height:34px;display:grid;place-items:center;border:1px solid #6b4b8a;background:#35234d;border-radius:9px;color:#dfc6ff;font:700 12px 'IBM Plex Mono',monospace}.trace-route,.trace-amount{display:flex;flex-direction:column;gap:6px;min-width:0}.trace-route>strong{display:flex;align-items:center;gap:8px;font-size:14px;color:#fff}.trace-route small,.trace-amount small{font-size:12px;color:#c2b3da;line-height:1.5;overflow-wrap:anywhere}.trace-amount strong{font-size:14px;color:#eadcff}.trace-row-chevron{color:#b7a0d3;transform:rotate(-90deg)}
+      .timeline-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;margin-bottom:16px}.timeline-toolbar{background:linear-gradient(120deg,#2a1b3e,#21152f);border-color:#4c365f;padding:16px 19px}.timeline-toolbar strong{display:block;color:#f3eaff;font-size:14px;margin-top:5px}.filter-pill{font-size:13px;color:#d1c3e5}.filter-pill select{font-size:13px;padding:9px 11px}.timeline-guidance{display:flex;align-items:flex-start;gap:11px;padding:15px 20px;border-bottom:1px solid #49345f;background:#2b1d40;color:#e4d3ff;font-size:13px;line-height:1.8}.timeline-guidance svg{flex-shrink:0;margin-top:3px;color:#c4a5ff}.timeline-guidance strong{color:#fff}.timeline-panel .timeline-list{padding:12px 24px 25px}.timeline-item{grid-template-columns:34px minmax(0,1fr);gap:15px;padding:20px 0 13px}.timeline-marker{width:32px;height:32px;border-radius:10px;background:#38244f;border-color:#765394;color:#e0c7ff}.timeline-marker.transaction{background:#4a2c51;border-color:#96618c;color:#ffd0ed}.timeline-marker.evidence{background:#35244e;border-color:#73549a;color:#dec6ff}.timeline-item:not(:last-child):before{left:15px;top:51px;background:linear-gradient(#765594,#38274e)}.timeline-meta{font:12px 'IBM Plex Mono',monospace;color:#c5b4df;gap:12px}.timeline-content h3{font-size:16px;color:#fff;margin:10px 0 7px}.timeline-content p{font-size:14px;color:#d1c4e5;line-height:1.8;margin:0}.timeline-source-line{display:flex;gap:14px;flex-wrap:wrap;color:#b5a2d2;font-size:12px;line-height:1.7;margin-top:10px}.timeline-evidence-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:13px}.timeline-evidence-grid>div{padding:11px 12px;border:1px solid #4c365f;border-radius:8px;background:#20142f;min-width:0}.timeline-evidence-grid span{display:block;color:#b9a4d8;font-size:10px;letter-spacing:.8px;font-weight:800}.timeline-evidence-grid strong{display:block;color:#f2eaff;font-size:12px;line-height:1.6;margin-top:5px;overflow-wrap:anywhere}.timeline-open-tx{font-size:13px;margin-top:11px;color:#dfc4ff}.timeline-content>small{font-size:12px;color:#b5a2d2}
+      .report-preview,.report-preview p,.report-list{color:#d3c6e8}.report-preview h2,.report-preview h3{color:#fff}.report-tabs button{font-size:14px;color:#c8b8df}.report-tabs button.active{color:#edddff;border-bottom-color:#c4a5ff}.report-transfer strong{font-size:14px;color:#fff}.report-transfer p{font-size:13px;color:#d0c1e5}.report-transfer small{font-size:12px;color:#bba9d7}.empty-state h3{font-size:16px;color:#fff}.empty-state p{font-size:13px;color:#c5b6dd;line-height:1.8}.evidence-name strong{font-size:14px;color:#fff}.evidence-name small{font-size:12px;color:#bcaad8}.evidence-name p{font-size:13px;color:#d0c1e5;line-height:1.8}
+      .modal{background:linear-gradient(145deg,#2a1a40,#160f24);border-color:#654783}.modal-head h2{font-size:25px;color:#fff}.modal-head p,.field-label{font-size:13px;color:#d2c3e8}.field-label input,.field-label textarea,.field-label select{font-size:14px;color:#fff}.dropzone{background:#241633;border-color:#8b6bb0}.dropzone strong{font-size:14px;color:#fff}.dropzone span{font-size:12px;color:#c6b5df}.toast{background:#241a35;border-color:#79569a;color:#e9d9ff;font-size:14px}
+      @media(max-width:1000px){.analysis-kpis,.timeline-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.trace-ledger-row{grid-template-columns:38px minmax(0,1fr) auto;}.trace-amount{grid-column:2}.trace-ledger-row>.badge{grid-column:3;grid-row:1}.trace-row-chevron{display:none}}
+      @media(max-width:650px){.analysis-kpis,.timeline-summary-grid{grid-template-columns:1fr 1fr}.analysis-intro{padding:16px}.analysis-intro-copy h2{font-size:21px}.analysis-intro-copy p{font-size:13px}.network-canvas{height:560px}.timeline-evidence-grid{grid-template-columns:1fr}.timeline-panel .timeline-list{padding:8px 15px 20px}.timeline-item{gap:10px}.timeline-content h3{font-size:15px}.timeline-content p{font-size:13px}.trace-ledger-row{gap:8px}.trace-route>strong,.trace-amount strong{font-size:12px}.trace-route small,.trace-amount small{font-size:11px}.section-header h1{font-size:29px}}
     `}</style>
   </div>;
 }
